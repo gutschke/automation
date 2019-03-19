@@ -161,7 +161,7 @@ class Enttec {
    * @param {number[]} data - bytes to be send.
    */
   async sendDMXPackage(data) {
-    console.log(`sendDMXPackage(${data})`);
+    this.log(`sendDMXPackage(${data})`);
     if (data.length < this.minNumberOfSlots || data.length > 512) {
       throw new Error('Invalid DMX package');
     }
@@ -171,7 +171,7 @@ class Enttec {
     // Send multiple copies of the same package in order to ensure that we
     // spend at least 5ms before making other changes.
     const reps = Math.max(1, Math.round(this.minTimeMs/time));
-    console.log(`${data} * ${reps}`);
+    this.log(`${data} * ${reps}`);
     // Add the required framing for the Enttec DMX widget. 0x7E and 0xE7 are
     // markers to help find packages. "6" is the command for sending DMX
     // packages. And we encode the length in little-endian order.
@@ -189,7 +189,7 @@ class Enttec {
    * @param {number} [...] values - one or more dimmer values on scale 0 to 255.
    */
   async setDimmer(id, ...values) {
-    console.log(`setDimmer(${id}, ${values})`);
+    this.log(`setDimmer(${id}, ${values})`);
     if (id <= 0 || id + values.length > 512) {
       throw new Error('Invalid DMX512 identifiers');
     }
@@ -253,6 +253,18 @@ Enttec.prototype.minNumberOfSlots = 24;
 // Restrict updates to at most one every 5ms. Our dimmers sometimes drop
 // DMX packets if we send faster than that.
 Enttec.prototype.minTimeMs = 5;
+
+const Logger = {
+  /**
+   * Write a debug message to the system log, escaping common special
+   * characters for better readability.
+   * @param {string} msg - The message to be output.
+   */
+  log(msg) {
+    console.log(msg.replace(/\r/g, '\\r').replace(/\n/g, '\\n'));
+  }
+};
+Object.assign(Enttec.prototype, Logger);
 
 /**
  * Proposed future Javascript extension that clamps a value in a numerical range

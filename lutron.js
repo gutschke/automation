@@ -1,16 +1,5 @@
 const net = require('net');
 
-const Logger = {
-  /**
-   * Write a debug message to the system log, escaping common special
-   * characters for better readability.
-   * @param {string} msg - The message to be output.
-   */
-  log(msg) {
-    console.log(msg.replace(/\r/g, '\\r').replace(/\n/g, '\\n'));
-  }
-};
-
 /** Class representing a connection to the Lutron RadioRA2 controller */
 class Lutron {
   /**
@@ -157,7 +146,6 @@ class Lutron {
   }
 }
 Lutron.prototype.Prompts = [ 'login: ', 'password: ', 'GNET> ' ];
-Object.assign(Lutron.prototype, Logger);
 
 /**
  * Wrapper around net.Socket, so that it can be use with "await" instead
@@ -329,6 +317,18 @@ Lutron.AsyncSocket = class {
     }
   }
 }
+
+const Logger = {
+  /**
+   * Write a debug message to the system log, escaping common special
+   * characters for better readability.
+   * @param {string} msg - The message to be output.
+   */
+  log(msg) {
+    console.log(msg.replace(/\r/g, '\\r').replace(/\n/g, '\\n'));
+  }
+};
+Object.assign(Lutron.prototype, Logger);
 Object.assign(Lutron.AsyncSocket.prototype, Logger);
 
 module.exports = Lutron;
