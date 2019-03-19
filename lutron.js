@@ -1,6 +1,6 @@
-let net = require('net');
+const net = require('net');
 
-let Logger = {
+const Logger = {
   /**
    * Write a debug message to the system log, escaping common special
    * characters for better readability.
@@ -69,8 +69,8 @@ class Lutron {
    * @return {string} The next line returned from the controller.
    */
   async read(cmd) {
-    let line = await this.socket.read();
-    let parts = line.split(',');
+    const line = await this.socket.read();
+    const parts = line.split(',');
     for (let monitor of this.monitors) {
       try {
         if (parts[0] === monitor.command) {
@@ -254,18 +254,18 @@ Lutron.AsyncSocket = class {
     return new Promise((resolve, reject) => {
       function err(msg) {
         this.log(`onError("${msg}")`);
-        let error = new Error(msg);
+        const error = new Error(msg);
         if (reject) {
-          let r = reject;
+          const r = reject;
           reject = null;
           r(error);
         } else {
-          let s = this.socket;
+          const s = this.socket;
           this.socket = null;
           if (s) s.destroy();
         }
         if (this.reader) {
-          let r = this.reader;
+          const r = this.reader;
           this.reader = null;
           if (r.reject) {
             r.reject(error);
@@ -284,7 +284,7 @@ Lutron.AsyncSocket = class {
    * @return {Promise} A promise that returns the next line.
    */
   async read() {
-    let data = this.nextLine('');
+    const data = this.nextLine('');
     if (data.length > 0) {
       this.log(`read() -> "${data}"`);
       return data;
@@ -292,7 +292,7 @@ Lutron.AsyncSocket = class {
     if (this.socket === null) {
       throw new Error('connection closed');
     }
-    let promise = new Promise((resolve, reject) => {
+    const promise = new Promise((resolve, reject) => {
       this.reader = { resolve: resolve, reject: reject };
     });
     await this.openSocket();
@@ -316,12 +316,12 @@ Lutron.AsyncSocket = class {
   destroy() {
     this.log('destroy()');
     if (this.socket) {
-      let s = this.socket;
+      const s = this.socket;
       this.socket = null;
       if (s) s.destroy();
     }
     if (this.reader) {
-      let r = this.reader;
+      const r = this.reader;
       this.reader = null;
       if (r.reject) {
         r.reject(err);
