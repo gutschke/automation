@@ -325,7 +325,7 @@ const Logger = {
    * @param {string} msg - The message to be output.
    */
   log(msg) {
-    console.log(msg.replace(/\r/g, '\\r').replace(/\n/g, '\\n'));
+    console.log(String(msg).replace(/\r/g, '\\r').replace(/\n/g, '\\n'));
   }
 };
 Object.assign(Lutron.prototype, Logger);
