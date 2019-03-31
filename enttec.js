@@ -12,8 +12,8 @@ class Enttec {
     this.port = port;
     this.serial = null;
     this.waitingForOpen = [ ];
-    this.values = Array.from({length: this.minNumberOfSlots}, () => 0);
-    this.nominalValues = [ ];
+    this.values = Array.from({ length: 513 }, () => 0);
+    this.nominalValues = Array.from({ length: this.values.length }, () => 0);
     this.fader = [ ];
     this.nextTimeOut = Date.now();
     this.refresh = () => {
@@ -23,16 +23,23 @@ class Enttec {
         // According to the Wikipedia page, that also ensures that several
         // other timing parameters stay within the expected range.
         var tm = 1000;
-        // Keep track of how much we still need to fade changing dimmer values.
+        // Change dimmer values as they fade to their new setting. This is
+        // the only place where we actually adjust dimmers.
+        var maxSlot = this.minNumberOfSlots;
         if (this.fader.length > 0) {
-          tm = this.fadeTimeStep;
           for (const f of this.fader) {
+            maxSlot = Math.max(maxSlot, f.id);
             this.values[f.id] =
               Math.clamp(Math.round(f.dest - f.delta*--f.steps), 0, 255);
           }
+          this.fader = this.fader.filter(x => x.steps > 0);
+          if (this.fader.length > 0) {
+            tm = this.fadeTimeStep;
+          }
+        } else {
+          maxSlot = this.values.length;
         }
-        this.fader = this.fader.filter(x => x.steps > 0);
-        this.sendDMXPackage(this.values).then(() => {
+        this.sendDMXPackage(this.values.slice(0, maxSlot)).then(() => {
           this.nextTimeOut = now + tm - Math.max(0, now - this.nextTimeOut);
           clearTimeout(this.timer);
           this.timer = setTimeout(this.refresh, this.nextTimeOut - now);
@@ -48,6 +55,7 @@ class Enttec {
   destroy() {
     this.port = null;
     this.refresh = null;
+    clearTimeout(this.timer);
     try {
       const s = this.serial;
       this.serial = null;
@@ -151,7 +159,15 @@ class Enttec {
     await this.openPort();
     // The NodeJS SerialPort implementation cannot delay changes to the baud-
     // rate until after the port has drained. So, we have to do this in two
-    // system calls.
+    // system calls. Even more problematically though, the FTDI kernel driver
+    // can drain its buffers, but it cannot wait for the device's buffers to
+    // empty. A bit of a delay helps make our code more conservative.
+    const drainMs = 11*(this.lastByteCount || 0)/250 -
+                    (this.lastWrite && Date.now() - this.lastWrite || 0);
+    if (drainMs > 0) {
+      await new Promise(r => setTimeout(r, drainMs));
+    }
+    this.lastByteCount = data.length;
     await this.serial.drain();
     // The minimum break time should be 92µs, and the minimum make-after-break
     // time should be 12µs, but longer times are acceptable. Timing in
@@ -164,8 +180,10 @@ class Enttec {
     // and the make-after-break is likely longer. That's OK.
     await this.serial.update({ baudRate: 90000 });
     await this.serial.write(Buffer.from([ 0 ]));
+    await new Promise(r => setTimeout(r, 11/90));
     await this.serial.drain();
     await this.serial.update({ baudRate: 250000 });
+    this.lastWrite = Date.now();
     return this.serial.write(data);
   }
 
@@ -177,9 +195,6 @@ class Enttec {
    */
   async sendDMXPackage(data) {
     this.log(`sendDMXPackage(${data})`);
-    if (data.length < this.minNumberOfSlots || data.length > 513) {
-      throw new Error('Invalid DMX package');
-    }
     // Estimate how long it'll take to transmit our package at 250kbaud with
     // an 8N2 encoding.
     const timeMs = data.length*11/250 + 0.122;
@@ -203,18 +218,21 @@ class Enttec {
    * @param {number} [...] values - one or more dimmer values on scale 0 to 1.
    */
   setDimmer(id, fadeTime, ...values) {
+    // Valid DMX addresses in our DMX universe are between 1 and 512.
     if (id <= 0 || id + values.length > 513) {
       throw new Error('Invalid DMX512 identifiers');
     }
-    if (this.values.length < id + values.length) {
-      this.values.concat(Array.from(
-        { length: id + value.length - this.values.length }, () => 0));
-    }
-    var i = id;
+    // We accept input values in the range 0 .. 1. Clamp all other values.
     values = values.map(x => Math.clamp(x, 0, 1));
+    // Remember the values that the caller asked to set. These values could
+    // differ from entries in this.values; that's particularly true in case
+    // of dim-to-glow dimmers (see below).
+    this.nominalValues = this.nominalValues.slice(0, id).concat(
+      values).concat(this.nominalValues.slice(id + values.length));
+    var i = id;
     for (const v of values) {
       const dest = Math.round(v*255);
-      const diff = dest - (this.values[i]);
+      const diff = dest - this.values[i];
       const steps = Math.max(1, Math.round(Math.abs(diff)*fadeTime*1000/
                                            (255*this.fadeTimeStep)));
       const delta = diff/steps;
@@ -223,12 +241,7 @@ class Enttec {
       ++i;
     }
     clearTimeout(this.timer);
-    this.timer = setTimeout(this.refresh, this.fadeTimeStep);
-    if (this.nominalValues.length < id + values.length) {
-      this.nominalValues.length = id + values.length
-    }
-    this.nominalValues = this.nominalValues.slice(0, id).concat(
-      values).concat(this.nominalValues.slice(id + values.length));
+    this.timer = setTimeout(this.refresh, 0);
   }
 
   /**
