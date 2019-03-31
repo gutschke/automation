@@ -11,9 +11,7 @@ class Enttec {
   constructor(port) {
     this.port = port;
     this.serial = null;
-    this.reader = null;
     this.waitingForOpen = [ ];
-    this.oldData = '';
     this.values = Array.from({length: this.minNumberOfSlots}, () => 0);
     this.nominalValues = [ ];
     this.fader = [ ];
@@ -34,9 +32,11 @@ class Enttec {
           }
         }
         this.fader = this.fader.filter(x => x.steps > 0);
-        this.sendDMXPackage(this.values);
-        this.nextTimeOut = now + tm - Math.max(0, now - this.nextTimeOut);
-        this.timer = setTimeout(this.refresh, this.nextTimeOut - now);
+        this.sendDMXPackage(this.values).then(() => {
+          this.nextTimeOut = now + tm - Math.max(0, now - this.nextTimeOut);
+          clearTimeout(this.timer);
+          this.timer = setTimeout(this.refresh, this.nextTimeOut - now);
+        });
       }
     }
     this.refresh();
@@ -56,18 +56,12 @@ class Enttec {
     }
     const waitingForOpen = this.waitingForOpen;
     this.waitingForOpen = null;
-    const reader = this.reader;
-    this.reader = null;
     const err = new Error('Object destroyed');
     for (const w of waitingForOpen) {
       try {
         w.reject(err);
       } catch (err) {
       }
-    }
-    try {
-      this.reader.reject(err);
-    } catch (err) {
     }
   }
 
@@ -85,16 +79,22 @@ class Enttec {
       return this.serial;
     }
     return new Promise((resolve, reject) => {
+      // Remember all the asynchronous callers that need to be notified once
+      // the port is either open, or has failed to open.
       this.waitingForOpen.push({ resolve: resolve, reject: reject });
+
+      // If there already is a pending operation to open the port, don't
+      // start another one.
       if (this.waitingForOpen.length > 1) {
         return;
       }
-      function err(msg) {
-        const error = new Error(msg);
+
+      // Internal helper function that closes the (partially) open connection
+      // and rejects all pending promises.
+      function fail(msg) {
+        const error = typeof msg === 'string' ? new Error(msg) : msg;
         const waitingForOpen = this.waitingForOpen;
         this.waitingForOpen = [ ];
-        const reader = this.reader;
-        this.reader = null;
         const s = this.serial;
         this.serial = null;
         if (s) s.close();
@@ -104,96 +104,95 @@ class Enttec {
           } catch (err) {
           }
         }
-        try {
-          reader.reject(error);
-        } catch (err) {
-        }
       }
-      const serial = new SerialPort(this.port, () => {
-        const waitingForOpen = this.waitingForOpen;
-        this.waitingForOpen = [ ];
-        this.serial = serial;
-        for (const w of waitingForOpen) {
-          try {
-            w.resolve(serial);
-          } catch (err) {
+
+      // Open the serial port. DMX is sent at 250kBaud, no parity, 1 start,
+      // 8 data, and 2 stop bits. It requires a break condition that lasts
+      // on the order of 100µs to signal the start of the frame. There should
+      // be at least 12µs between the mark and the frame. Frames start with a
+      // "0" label followed by up to 512 8bit dimmer values. The minimum time
+      // between marks can be ensured by always sending at least 24 dimmer
+      // values in each DMX package.
+      const serial = new SerialPort(this.port,
+                                    { baudRate: 250000,
+                                      dataBits: 8,
+                                      stopBits: 2,
+                                      parity: 'none' }, () => {
+        // Wake up the DMX bus. Unless RTS is cleared, the output driver is
+        // disabled.
+        serial.set({ rts: false }, (err) => {
+          // Either reject the promise, or ...
+          if (err) return fail(err);
+          // ... resolve the promise for all waiting callers.
+          const waitingForOpen = this.waitingForOpen;
+          this.waitingForOpen = [ ];
+          this.serial = serial;
+          for (const w of waitingForOpen) {
+            try {
+              w.resolve(serial);
+            } catch (err) {
+            }
           }
-        }
-      }).on('data', data => {
-        const r = this.reader;
-        this.reader = null;
-        if (r && r.resolve) {
-          r.resolve(data);
-        } else {
-          this.oldData = this.oldData + data;
-        }
-      }).on('error', () => { err('serial port error'); })
-        .on('end',   () => { err('serial port closed'); })
+        });
+      }).on('error', () => { fail('serial port error'); })
+        .on('end',   () => { fail('serial port closed'); })
         .setEncoding('binary');
     });
   }
 
   /**
-   * Wrap the SerialPort.write() method into a Promise. Also, ensure that the
-   * port is open, if it hadn't previously been opened. This is useful after
-   * temporary I/O errors (e.g. device unplugged from USB) to retry operations.
+   * Send the serial break condition that DMX requires in order to mark the
+   * beginning of a new DMX frame. Also, ensure that the port is open, if it
+   * hadn't previously been opened. This is useful after temporary I/O errors
+   * (e.g. device unplugged from USB) to retry operations.
    * @param {string} data - data that should be written to Enttec DMX widget.
    */
   async write(data) {
     await this.openPort();
-    return new Promise((resolve, reject) => {
-      this.serial.write(data, 'binary', err => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
-      });
-    });
-  }
-
-  /**
-   * Read data from the Enttec DMX widget. This method is only used for
-   * debugging purposes right now. TODO: Learn about packet framing and
-   * reassemble packets.
-   */
-  async read() {
-    if (this.oldData !== '') {
-      const s = this.oldData;
-      this.oldData = '';
-      return s;
-    }
-    const promise = new Promise((resolve, reject) => {
-      this.reader = { resolve: resolve, reject: reject };
-    });
-    await this.openPort();
-    return promise;
+    // The NodeJS SerialPort implementation cannot delay changes to the baud-
+    // rate until after the port has drained. So, we have to do this in two
+    // system calls.
+    await this.serial.drain();
+    // The minimum break time should be 92µs, and the minimum make-after-break
+    // time should be 12µs, but longer times are acceptable. Timing in
+    // Javascript can be fragile, so using the hardware to assist is
+    // preferable. We can achieve this by slowing down the baudrate and
+    // sending a NUL character. Afterwards, we still have to drain the output,
+    // as the hardware can't handle baudrate changes while data is on the fly.
+    // A 90kBaud transmission rate results in a 100µs break, and a 22µs
+    // make-after-break. In practice, the system calls will introduce delays
+    // and the make-after-break is likely longer. That's OK.
+    await this.serial.update({ baudRate: 90000 });
+    await this.serial.write(Buffer.from([ 0 ]));
+    await this.serial.drain();
+    await this.serial.update({ baudRate: 250000 });
+    return this.serial.write(data);
   }
 
   /**
    * @private
-   * Send one DMX dataset.
+   * Send one DMX dataset. Verify that the package looks like DMX dataset.
+   * Repeat as needed, if the package is very short.
    * @param {number[]} data - bytes to be send.
    */
   async sendDMXPackage(data) {
     this.log(`sendDMXPackage(${data})`);
-    if (data.length < this.minNumberOfSlots || data.length > 512) {
+    if (data.length < this.minNumberOfSlots || data.length > 513) {
       throw new Error('Invalid DMX package');
     }
     // Estimate how long it'll take to transmit our package at 250kbaud with
-    // an 8N1 encoding.
-    const time = data.length*11/250;
+    // an 8N2 encoding.
+    const timeMs = data.length*11/250 + 0.122;
+    const timeout = Date.now() + this.minTimeMs;
     // Send multiple copies of the same package in order to ensure that we
     // spend at least a couple of milliseconds before making other changes.
-    const reps = Math.max(1, Math.round(this.minTimeMs/time));
-    // Add the required framing for the Enttec DMX widget. 0x7E and 0xE7 are
-    // markers to help find packages. "6" is the command for sending DMX
-    // packages. And we encode the length in little-endian order.
-    const buffer = Buffer.from([].concat(...Array(reps).fill(
-      [ 0x7E, 6, data.length & 0xFF, (data.length >> 8) & 0xFF].concat(
-      data).concat(
-      [ 0xE7 ]))));
-    return this.write(buffer, 'binary');
+    for (let reps = Math.max(1, Math.round(this.minTimeMs/timeMs));
+         reps > 0; --reps) {
+      await this.write(Buffer.from(data));
+      if (timeout - Date.now() < 0) {
+        break;
+      }
+    }
   }
 
   /**
@@ -203,8 +202,8 @@ class Enttec {
    * @param {number} fadeTime - rate of change in seconds per 100% change.
    * @param {number} [...] values - one or more dimmer values on scale 0 to 1.
    */
-  async setDimmer(id, fadeTime, ...values) {
-    if (id <= 0 || id + values.length > 512) {
+  setDimmer(id, fadeTime, ...values) {
+    if (id <= 0 || id + values.length > 513) {
       throw new Error('Invalid DMX512 identifiers');
     }
     if (this.values.length < id + values.length) {
@@ -241,7 +240,7 @@ class Enttec {
    * @param {number} fadeTime - rate of change in seconds per 100% change.
    * @param {number} [...] values - brightness on scale 0 to 1.0.
    */
-  async setDimToGlow(id, fadeTime, ...values) {
+  setDimToGlow(id, fadeTime, ...values) {
     // In order to achieve a dim-to-glow effect, we vary the rate of change
     // for both the warm and the cold LEDs. For warm LEDs, we start with a
     // high rate of change close to the lower end, and taper off to a slower
@@ -265,10 +264,16 @@ class Enttec {
       warmCold.push(/* cold LEDs */quadratic(v, 0.5, 1.3, 1));
       warmCold.push(/* warm LEDs */quadratic(v, 1.3, 0.5, .6));
     }
-    const promise = this.setDimmer.apply(this, warmCold);
+    this.setDimmer.apply(this, warmCold);
+
+    // For regular dimmers, we only store a single value per DMX slot. On the
+    // other hand, dim-to-glow dimmers actually have two consecutive DMX
+    // addresses. We store the actual values in this.values, but we store
+    // the dim-to-glow percentage in the first entry of the this.nominalValues
+    // tuple for this dimmer.
     this.nominalValues = this.nominalValues.slice(0, id).concat(
-      values).concat(this.nominalValues.slice(id + values.length));
-    return promise;
+      values.reduce((acc, _, idx, src) => acc.concat(src[idx], 0), [])).concat(
+      this.nominalValues.slice(id + 2*values.length));
   }
 
   /**
@@ -284,8 +289,10 @@ class Enttec {
 // line.
 Enttec.prototype.minNumberOfSlots = 24;
 // Restrict updates to at most one every 5ms. Our dimmers sometimes drop
-// DMX packets if we send faster than that.
-Enttec.prototype.minTimeMs = 3;
+// DMX packets if we send faster than that. On the other hand, the Raspberry
+// Pi Zero W that this code runs on is not really fast enough to execute more
+// than about one DMX transaction every 5ms anyways.
+Enttec.prototype.minTimeMs = 5;
 // How frequently to refresh dimmers during active fading (in milliseconds).
 Enttec.prototype.fadeTimeStep = 50;
 
