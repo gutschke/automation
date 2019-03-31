@@ -16,37 +16,7 @@ class Enttec {
     this.nominalValues = Array.from({ length: this.values.length }, () => 0);
     this.fader = [ ];
     this.nextTimeOut = Date.now();
-    this.refresh = () => {
-      const now = Date.now();
-      if (this.refresh !== null) {
-        // DMX likes to receive all dimmer values at least once per second.
-        // According to the Wikipedia page, that also ensures that several
-        // other timing parameters stay within the expected range.
-        var tm = 1000;
-        // Change dimmer values as they fade to their new setting. This is
-        // the only place where we actually adjust dimmers.
-        var maxSlot = this.minNumberOfSlots;
-        if (this.fader.length > 0) {
-          for (const f of this.fader) {
-            maxSlot = Math.max(maxSlot, f.id);
-            this.values[f.id] =
-              Math.clamp(Math.round(f.dest - f.delta*--f.steps), 0, 255);
-          }
-          this.fader = this.fader.filter(x => x.steps > 0);
-          if (this.fader.length > 0) {
-            tm = this.fadeTimeStep;
-          }
-        } else {
-          maxSlot = this.values.length;
-        }
-        this.sendDMXPackage(this.values.slice(0, maxSlot)).then(() => {
-          this.nextTimeOut = now + tm - Math.max(0, now - this.nextTimeOut);
-          clearTimeout(this.timer);
-          this.timer = setTimeout(this.refresh, this.nextTimeOut - now);
-        });
-      }
-    }
-    this.refresh();
+    this.nextTickIn(0);
   }
 
   /**
@@ -54,8 +24,8 @@ class Enttec {
    */
   destroy() {
     this.port = null;
-    this.refresh = null;
     clearTimeout(this.timer);
+    this.timer = null;
     try {
       const s = this.serial;
       this.serial = null;
@@ -71,6 +41,58 @@ class Enttec {
       } catch (err) {
       }
     }
+  }
+
+  /**
+   * @private
+   * Actual updates of the DMX dimmers happen asynchronously on a timer.
+   * This allows us to fade dimmers in and out, to refresh dimmer status
+   * on a 1Hz heartbeat, and to honor timing lock-outs required by some
+   * dimmers.
+   */
+  refresh() {
+    if (!this.timer) {
+      // Object was already destroyed, but somebody invoked the refresh()
+      // method manually.
+      return;
+    }
+    const now = Date.now();
+    // DMX likes to receive all dimmer values at least once per second.
+    // According to the Wikipedia page, that also ensures that several
+    // other timing parameters stay within the expected range.
+    var tm = 1000;
+    // Change dimmer values as they fade to their new setting. This is
+    // the only place where we actually adjust dimmers.
+    var maxSlot = this.minNumberOfSlots;
+    if (this.fader.length > 0) {
+      for (const f of this.fader) {
+        maxSlot = Math.max(maxSlot, f.id);
+        this.values[f.id] =
+          Math.clamp(Math.round(f.dest - f.delta*--f.steps), 0, 255);
+      }
+      this.fader = this.fader.filter(x => x.steps > 0);
+      if (this.fader.length > 0) {
+        tm = this.fadeTimeStepMs;
+      }
+    } else {
+      maxSlot = this.values.length;
+    }
+    const values = this.values.slice(0, maxSlot);
+    this.log(`sendDMXPackage(${values})`);
+    this.write(Buffer.from(values)).then(() => {
+      this.nextTimeOut = now + tm - Math.max(0, now - this.nextTimeOut);
+      this.nextTickIn(this.nextTimeOut - now);
+    });
+  }
+
+  /**
+   * @private
+   * Schedule the next refresh to happen on a timer.
+   * @param {number} ms - number of microseconds until the next timer tick.
+   */
+  nextTickIn(ms) {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.refresh(), ms);
   }
 
   /**
@@ -188,29 +210,6 @@ class Enttec {
   }
 
   /**
-   * @private
-   * Send one DMX dataset. Verify that the package looks like DMX dataset.
-   * Repeat as needed, if the package is very short.
-   * @param {number[]} data - bytes to be send.
-   */
-  async sendDMXPackage(data) {
-    this.log(`sendDMXPackage(${data})`);
-    // Estimate how long it'll take to transmit our package at 250kbaud with
-    // an 8N2 encoding.
-    const timeMs = data.length*11/250 + 0.122;
-    const timeout = Date.now() + this.minTimeMs;
-    // Send multiple copies of the same package in order to ensure that we
-    // spend at least a couple of milliseconds before making other changes.
-    for (let reps = Math.max(1, Math.round(this.minTimeMs/timeMs));
-         reps > 0; --reps) {
-      await this.write(Buffer.from(data));
-      if (timeout - Date.now() < 0) {
-        break;
-      }
-    }
-  }
-
-  /**
    * Uses the Enttec OpenDMX widget to set the brightness of one or more DMX-
    * addressable dimmers.
    * @param {number} id - the DMX id of the first dimmer.
@@ -233,15 +232,17 @@ class Enttec {
     for (const v of values) {
       const dest = Math.round(v*255);
       const diff = dest - this.values[i];
-      const steps = Math.max(1, Math.round(Math.abs(diff)*fadeTime*1000/
-                                           (255*this.fadeTimeStep)));
+      const ms = fadeTime;
+      const steps = Math.max(1, Math.round(
+        this.values[i] <= 1 && dest > this.values[i]
+          ? this.powerOnSteps
+          : Math.abs(diff)*fadeTime*1000/(255*this.fadeTimeStepMs)));
       const delta = diff/steps;
       this.fader = this.fader.filter(x => x.id != i);
       this.fader.push({ id: i, dest: dest, steps: steps, delta: delta });
       ++i;
     }
-    clearTimeout(this.timer);
-    this.timer = setTimeout(this.refresh, 0);
+    this.nextTickIn(0);
   }
 
   /**
@@ -301,13 +302,10 @@ class Enttec {
 // than the minimum required time in between break conditions on the serial
 // line.
 Enttec.prototype.minNumberOfSlots = 24;
-// Restrict updates to at most one every 5ms. Our dimmers sometimes drop
-// DMX packets if we send faster than that. On the other hand, the Raspberry
-// Pi Zero W that this code runs on is not really fast enough to execute more
-// than about one DMX transaction every 5ms anyways.
-Enttec.prototype.minTimeMs = 5;
 // How frequently to refresh dimmers during active fading (in milliseconds).
-Enttec.prototype.fadeTimeStep = 50;
+Enttec.prototype.fadeTimeStepMs = 50;
+// Some dimmers don't power on, unless they are gradually ramped up.
+Enttec.prototype.powerOnSteps = 5;
 
 const Logger = {
   /**
