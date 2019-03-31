@@ -259,10 +259,11 @@ class Enttec {
       const dest = Math.round(v*255);
       const diff = dest - this.values[i];
       const ms = fadeTime;
-      const steps = Math.max(1, Math.round(
+      const steps = Math.max(
+        Math.round(Math.abs(diff)*fadeTime*1000/(255*this.fadeTimeStepMs)),
         this.values[i] <= 1 && dest > this.values[i]
-          ? this.powerOnTimeMs / this.fadeTimeStepMs
-          : Math.abs(diff)*fadeTime*1000/(255*this.fadeTimeStepMs)));
+          ? Math.round(this.powerOnTimeMs / this.fadeTimeStepMs)
+          : 1);
       const delta = diff/steps;
       this.fader = this.fader.filter(x => x.id != i);
       this.fader.push({ id: i, dest: dest, steps: steps, delta: delta });
