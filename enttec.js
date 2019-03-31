@@ -78,11 +78,14 @@ class Enttec {
       maxSlot = this.values.length;
     }
     const values = this.values.slice(0, maxSlot);
-    this.log(`sendDMXPackage(${values})`);
-    this.write(Buffer.from(values)).then(() => {
-      this.nextTimeOut = now + tm - Math.max(0, now - this.nextTimeOut);
-      this.nextTickIn(this.nextTimeOut - now);
-    });
+    this.write(Buffer.from(values)).then(
+      () => {
+        this.nextTimeOut =
+          now + Math.max(0, tm - Math.max(0, now - this.nextTimeOut));
+        this.nextTickIn(this.nextTimeOut - now); },
+      () => {
+        this.nextTimeOut = now + 1000;
+        this.nextTickIn(1000); });
   }
 
   /**
@@ -91,6 +94,14 @@ class Enttec {
    * @param {number} ms - number of microseconds until the next timer tick.
    */
   nextTickIn(ms) {
+    // In most situations, it is acceptable to schedule a new timer that
+    // overrides the one that is currently pending. But this is not true
+    // while this.write() runs. That could lead to multiple overlapping
+    // I/O operations. Suspend any new timer creations. We can rely on another
+    // timer being set when the write operation is done.
+    if (this.writing) {
+      return;
+    }
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.refresh(), ms);
   }
@@ -178,35 +189,50 @@ class Enttec {
    * @param {string} data - data that should be written to Enttec DMX widget.
    */
   async write(data) {
-    await this.openPort();
-    // The NodeJS SerialPort implementation cannot delay changes to the baud-
-    // rate until after the port has drained. So, we have to do this in two
-    // system calls. Even more problematically though, the FTDI kernel driver
-    // can drain its buffers, but it cannot wait for the device's buffers to
-    // empty. A bit of a delay helps make our code more conservative.
-    const drainMs = 11*(this.lastByteCount || 0)/250 -
-                    (this.lastWrite && Date.now() - this.lastWrite || 0);
-    if (drainMs > 0) {
-      await new Promise(r => setTimeout(r, drainMs));
+    this.log(`sendDMXPackage(${[...data]})`);
+    this.writing = true;
+    try {
+      await this.openPort();
+      // The NodeJS SerialPort implementation cannot delay changes to the baud-
+      // rate until after the port has drained. So, we have to do this in two
+      // system calls. Even more problematically though, the FTDI kernel driver
+      // can drain its buffers, but it cannot wait for the device's buffers to
+      // empty. A bit of a delay helps make our code more conservative.
+      const drainMs = 11*(this.lastByteCount || 0)/250 -
+                      (this.lastWrite && Date.now() - this.lastWrite || 0);
+      if (drainMs > 0) {
+        await new Promise(r => setTimeout(r, drainMs));
+      }
+      this.lastByteCount = data.length;
+      await this.serial.drain();
+      // The minimum break time should be 92µs, and the minimum make-after-break
+      // time should be 12µs, but longer times are acceptable. Timing in
+      // Javascript can be fragile, so using the hardware to assist is
+      // preferable. We can achieve this by slowing down the baudrate and
+      // sending a NUL character. Afterwards, we still have to drain the output,
+      // as the hardware can't handle baudrate changes while data is on the fly.
+      // A 90kBaud transmission rate results in a 100µs break, and a 22µs
+      // make-after-break. In practice, the system calls will introduce delays
+      // and the make-after-break is likely longer. That's OK.
+      await this.serial.update({ baudRate: 90000 });
+      await this.serial.write(Buffer.from([ 0 ]));
+      await new Promise(r => setTimeout(r, 11/90));
+      await this.serial.drain();
+      await this.serial.update({ baudRate: 250000 });
+      this.lastWrite = Date.now();
+      return new Promise((resolve, reject) => {
+        this.serial.write(data, (err) => {
+          this.writing = false;
+          if (err) reject(err);
+          else {
+            this.log('done sending');
+            resolve();
+          }
+        }); });
+    } catch (err) {
+      this.writing = false;
+      throw err;
     }
-    this.lastByteCount = data.length;
-    await this.serial.drain();
-    // The minimum break time should be 92µs, and the minimum make-after-break
-    // time should be 12µs, but longer times are acceptable. Timing in
-    // Javascript can be fragile, so using the hardware to assist is
-    // preferable. We can achieve this by slowing down the baudrate and
-    // sending a NUL character. Afterwards, we still have to drain the output,
-    // as the hardware can't handle baudrate changes while data is on the fly.
-    // A 90kBaud transmission rate results in a 100µs break, and a 22µs
-    // make-after-break. In practice, the system calls will introduce delays
-    // and the make-after-break is likely longer. That's OK.
-    await this.serial.update({ baudRate: 90000 });
-    await this.serial.write(Buffer.from([ 0 ]));
-    await new Promise(r => setTimeout(r, 11/90));
-    await this.serial.drain();
-    await this.serial.update({ baudRate: 250000 });
-    this.lastWrite = Date.now();
-    return this.serial.write(data);
   }
 
   /**
