@@ -1,7 +1,7 @@
 const SerialPort = require('serialport');
 
 /**
- * The Enttec object provides methods for communicating with an Enttec DMX
+ * The Enttec object provides methods for communicating with an Enttec OpenDMX
  * widget.
  */
 class Enttec {
@@ -75,7 +75,7 @@ class Enttec {
 
   /**
    * @private
-   * Opens the serial connection to the Enttec DMX widget. Returns a Promise
+   * Opens the serial connection to the Enttec OpenDMX widget. Returns a Promise
    * to asynchronously track progress. Also sets up all the required callbacks
    * so that they can be used from asynchronous functions. If any type of
    * error is detected, close the port. It'll be re-opened by the next I/O
@@ -211,7 +211,7 @@ class Enttec {
   }
 
   /**
-   * Uses the Enttec DMX widget to set the brightness of one or more DMX-
+   * Uses the Enttec OpenDMX widget to set the brightness of one or more DMX-
    * addressable dimmers.
    * @param {number} id - the DMX id of the first dimmer.
    * @param {number} fadeTime - rate of change in seconds per 100% change.
