@@ -261,7 +261,7 @@ class Enttec {
       const ms = fadeTime;
       const steps = Math.max(1, Math.round(
         this.values[i] <= 1 && dest > this.values[i]
-          ? this.powerOnSteps
+          ? this.powerOnTimeMs / this.fadeTimeStepMs
           : Math.abs(diff)*fadeTime*1000/(255*this.fadeTimeStepMs)));
       const delta = diff/steps;
       this.fader = this.fader.filter(x => x.id != i);
@@ -331,7 +331,7 @@ Enttec.prototype.minNumberOfSlots = 24;
 // How frequently to refresh dimmers during active fading (in milliseconds).
 Enttec.prototype.fadeTimeStepMs = 50;
 // Some dimmers don't power on, unless they are gradually ramped up.
-Enttec.prototype.powerOnSteps = 5;
+Enttec.prototype.powerOnTimeMs = 250;
 
 const Logger = {
   /**
