@@ -7,17 +7,17 @@ class Lutron {
    * and password when needed. In case of error, fails the operation and
    * then re-opens a connection on the next operation.
    * @param {string} gateway - Hostname or ip address.
-   * @param {string} username - The account name to use for authentication.
-   * @param {string} password - The account password.
+   * @param {string} [username] - The account name to use for authentication.
+   * @param {string} [password] - The account password.
    */
   constructor(gateway, username, password) {
     this.gateway = gateway;
-    this.username = username;
-    this.password = password;
+    this.username = username || 'lutron';
+    this.password = password || 'integration';
     this.socket = null;
     this.oldData = '';
     this.monitors = [ ];
-    this.nested = 0;
+    this.active = 0;
   }
 
   /**
@@ -30,7 +30,8 @@ class Lutron {
     if (!this.socket) {
       let s;
       try {
-        s = new Lutron.AsyncSocket(23, this.gateway, this.Prompts);
+        s = new Lutron.AsyncSocket(23, this.gateway, this.Prompts,
+                                   (l) => this.processMonitors(l));
         for (; ; s.destroy()) {
           let p = await s.read();
           if (p === this.Prompts[2]) break;
@@ -53,75 +54,84 @@ class Lutron {
 
   /**
    * @private
-   * Reads a line from the Lutron RadioRA2 controller. Before returning to
-   * the caller, invokes any pending monitors that apply.
-   * @return {string} The next line returned from the controller.
+   * Processes applicable monitors, if any.
+   * @param {string} line - next line read from controller.
    */
-  async read(cmd) {
-    const line = await this.socket.read();
+  processMonitors(line) {
     const parts = line.split(',');
     for (let monitor of this.monitors) {
       try {
         if (parts[0] === monitor.command) {
-          for (let i = 0; ; ++i) {
-            if (parts[i+1] != monitor.args[i]) break;
+          for (let i = 0; i < monitor.args.length; ++i) {
+            if (parts[i+1] !== monitor.args[i]) break;
             if (i === monitor.args.length-1) {
-              monitor.cb(...parts);
+              setTimeout(() => monitor.cb(...parts), 0);
             }
           }
         }
       } catch (err) {
         // Do nothing
+        this.log(err);
       }
     }
+  }
+
+  /**
+   * @private
+   * Reads a line from the Lutron RadioRA2 controller. Before returning to
+   * the caller, invokes any pending monitors that apply.
+   * @return {string} The next line returned from the controller.
+   */
+  async read() {
+    const line = await this.socket.read();
     return line;
   }
 
   /**
    * Send a command to the Lutron RadioRA2 controller and wait for it to
-   * complete. Throws an error, if anything went wrong. If no arguments are
-   * provided, this method can be used inside of the main loop to keep
-   * processing data from the Lutron RadioRA2 controller.
+   * complete. Throws an error, if anything went wrong.
    * @return {string} Response from controller, if any.
    */
   async command(cmd) {
+    console.log(`command(${cmd})`);
     try {
+      ++this.active;
+      if (this.socket)
+        this.socket.setIdle(!this.active);
       await this.login();
-      if (cmd) {
-        let err, rc;
-        this.nested++;
-        this.socket.write(cmd + '\r\n');
-        for (;;) {
-          let s = await this.read();
-          if (cmd.startsWith('?') &&
-              s.startsWith('~' + cmd.substr(1) + ',')) {
-            rc = s.substr(cmd.length + 1);
-          } else if (s.startsWith('~ERROR')) {
-            err = new Error(s);
-          } else if (s === 'is an unknown command') {
-            err = new Error(`${cmd} ${s}`);
-          } else if (s === this.Prompts[2]) {
-            break;
-          }
-        }
-        this.nested--;
-        if (err) {
-          throw err;
-        } else if (rc) {
-          return rc;
+      let err, rc;
+      this.socket.write(cmd + '\r\n');
+      for (;;) {
+        let s = await this.read();
+        if (cmd.startsWith('?') &&
+            s.startsWith('~' + cmd.substr(1) + ',')) {
+          rc = s.substr(cmd.length + 1);
+        } else if (s.startsWith('~ERROR')) {
+          err = new Error(s);
+        } else if (s === 'is an unknown command') {
+          err = new Error(`${cmd} ${s}`);
+        } else if (s === this.Prompts[2] /* GNET> */) {
+          rc = true;
+          break;
         }
       }
-      if (!this.nested) {
-        return this.read();
+      if (err) {
+        throw err;
+      } else if (rc) {
+        return rc;
       }
     } catch (e) {
-      this.log(String(e));
+      this.log(e);
       if (this.socket) {
         let s = this.socket;
         this.socket = null;
         s.destroy();
       }
       throw e;
+    } finally {
+      --this.active;
+      if (this.socket)
+        this.socket.setIdle(!this.active);
     }
   }
 
@@ -129,10 +139,10 @@ class Lutron {
    * Registers a new callback to be invoked whenever the controller sends a
    * message that matches "command" followed by a subset of arguments.
    * @return {Object} An object that can be used to remove the monitor.
-   */ 
+   */
   monitor(command, ...args /*, cb */) {
-    let cb = args.pop();
-    let m = { command: command, args: args, cb: cb };
+    const cb = args.pop();
+    const m = { command: command, args: args.map(x => `${x}`), cb: cb };
     this.monitors.push(m);
     return m;
   }
@@ -146,6 +156,7 @@ class Lutron {
   }
 }
 Lutron.prototype.Prompts = [ 'login: ', 'password: ', 'GNET> ' ];
+Lutron.Events = { DOWN: 3, UP: 4 };
 
 /**
  * Wrapper around net.Socket, so that it can be use with "await" instead
@@ -160,13 +171,15 @@ Lutron.AsyncSocket = class {
    * @param {string} host - Hostname or IP address to connect to.
    * @param {string[]} prompts - List of prompts that should be detected.
    */
-  constructor(port, host, prompts) {
+  constructor(port, host, prompts, processMonitors) {
     this.port = port;
     this.host = host;
     this.prompts = prompts;
+    this.processMonitors = processMonitors;
     this.socket = undefined;
     this.reader = null;
     this.oldData = '';
+    this.idle = true;
   }
 
   /**
@@ -186,6 +199,8 @@ Lutron.AsyncSocket = class {
     for (let p of this.prompts) {
       if (d.startsWith(p)) {
         this.oldData = d.substr(p.length);
+        this.processMonitors(p);
+        this.log(`read() -> "${p}"`);
         return p;
       }
     }
@@ -193,6 +208,8 @@ Lutron.AsyncSocket = class {
     if (eol >= 0) {
       this.oldData = data.substr(eol + 2);
       data = data.substr(0, eol);
+      this.processMonitors(data);
+      this.log(`read() -> "${data}"`);
       return data;
     } else {
       this.oldData = data;
@@ -213,19 +230,29 @@ Lutron.AsyncSocket = class {
       // at the end of the prompt.
       data = String(data).replace(/\0/g, '');
     }
-    //this.log(`onData("${data}")`);
-    if (this.reader) {
+    if (this.reader || this.idle) {
       let r = this.reader;
       this.reader = null;
       data = this.nextLine(data);
       if (data.length > 0) {
-        this.log(`read() -> "${data}" [async]`);
-        if (r.resolve) {
+        if (r && r.resolve) {
           r.resolve(data);
         }
       }
     } else {
       this.oldData = this.oldData + data;
+    }
+  }
+
+  /**
+   * Set the connection as idle (i.e. discard all unsolicited data) or as
+   * busy (i.e. collect all data, so that it can be returned from read() calls).
+   * @param {boolean} idle - indicate whether the connection is idle or busy.
+   */
+  setIdle(idle) {
+    this.idle = idle;
+    if (idle) {
+      this.oldData = '';
     }
   }
 
@@ -260,12 +287,16 @@ Lutron.AsyncSocket = class {
           }
         }
       }
-      this.socket.on('connect', ()  => { reject = null; resolve(); })
-                 .on('error',   ()  => err('socket error'))
+      this.socket.on('error',   ()  => err('socket error'))
                  .on('end',     ()  => err('connection closed'))
-                 .on('data',    (d) => this.onData(d));
+                 .on('data',    (d) => this.onData(d))
+                 .on('connect', ()  => {
+                   this.idle = false; // Waiting for login prompt
+                   reject = null;
+                   resolve(); });
     });
   }
+
   /**
    * Reads the next line from the Lutron RadioRA2 controller. This method
    * always returns a promise that can be resolved to retrieve the line.
@@ -274,7 +305,6 @@ Lutron.AsyncSocket = class {
   async read() {
     const data = this.nextLine('');
     if (data.length > 0) {
-      this.log(`read() -> "${data}"`);
       return data;
     }
     if (this.socket === null) {
@@ -286,6 +316,7 @@ Lutron.AsyncSocket = class {
     await this.openSocket();
     return promise;
   }
+
   /**
    * Sends data to the Lutron RadioRA2 controller. The caller has to append
    * '\r\n' if applicable.
