@@ -6,10 +6,10 @@ const SerialPort = require('serialport');
  */
 class Enttec {
   /** Constructor for the Enttec object.
-   * @param {string} port - filename of the serial port (e.g. /dev/ttyUSB0)
+   * @param {string} [port='/dev/ttyUSB0'] - filename of the serial port
    */
   constructor(port) {
-    this.port = port;
+    this.port = port || '/dev/ttyUSB0';
     this.serial = null;
     this.waitingForOpen = [ ];
     this.values = Array.from({ length: 513 }, () => 0);
@@ -224,11 +224,7 @@ class Enttec {
         this.serial.write(data, (err) => {
           this.writing = false;
           if (err) reject(err);
-          else {
-            this.log('done sending');
-            resolve();
-          }
-        }); });
+          else resolve(); }); });
     } catch (err) {
       this.writing = false;
       throw err;
@@ -341,7 +337,7 @@ const Logger = {
    * @param {string} msg - The message to be output.
    */
   log(msg) {
-    console.log(String(msg).replace(/\r/g, '\\r').replace(/\n/g, '\\n'));
+//  console.log(String(msg).replace(/\r/g, '\\r').replace(/\n/g, '\\n'));
   }
 };
 Object.assign(Enttec.prototype, Logger);
