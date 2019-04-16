@@ -132,7 +132,7 @@ class Enttec {
 
       // Internal helper function that closes the (partially) open connection
       // and rejects all pending promises.
-      function fail(msg) {
+      const fail = (msg) => {
         const error = typeof msg === 'string' ? new Error(msg) : msg;
         const waitingForOpen = this.waitingForOpen;
         this.waitingForOpen = [ ];
@@ -239,6 +239,7 @@ class Enttec {
    * @param {number} [...] values - one or more dimmer values on scale 0 to 1.
    */
   setDimmer(id, fadeTime, ...values) {
+    this.log(`setDimmer(${id}, ${fadeTime}, ${values.map(x => Math.round(x*255))})`);
     // Valid DMX addresses in our DMX universe are between 1 and 512.
     if (id <= 0 || id + values.length > 513) {
       throw new Error('Invalid DMX512 identifiers');
