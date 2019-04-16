@@ -1,0 +1,91 @@
+#! /bin/sh
+
+### BEGIN INIT INFO
+# Provides:          automation
+# Required-Start:    $remote_fs $syslog
+# Required-Stop:     $remote_fs $syslog
+# Should-Start:      $named autofs
+# Default-Start:     2 3 4 5
+# Default-Stop:      
+# Short-Description: Home automation
+# Description:       The "automation" daemon integrates with a Lutron RadioRA2
+#                    home automation system, provides control for DMX dimmers,
+#                    and operates devices attached to GPIO pins.
+### END INIT INFO
+
+set -e
+
+# /etc/init.d/automation: start and stop the automation daemon
+
+DAEMON=/home/pi/automation/automation.js
+AUTOMATION_PID_FILE=/var/run/automation.pid
+
+test -x $DAEMON || exit 0
+
+. /lib/lsb/init-functions
+
+export PATH="${PATH:+$PATH:}/usr/sbin:/sbin"
+
+automation_start() {
+    if start-stop-daemon --start --quiet --background \
+        --pidfile $AUTOMATION_PID_FILE --make-pidfile \
+        --exec $DAEMON --
+    then
+        rc=0
+        sleep 1
+        if ! kill -0 $(cat $AUTOMATION_PID_FILE) >/dev/null 2>&1; then
+            log_failure_msg "automation daemon failed to start"
+            rc=1
+        fi
+    else
+        rc=1
+    fi
+    if [ $rc -eq 0 ]; then
+        log_end_msg 0
+    else
+        log_end_msg 1
+        rm -f $AUTOMATION_PID_FILE
+    fi
+} # automation_start
+
+
+case "$1" in
+  start)
+	log_daemon_msg "Starting automation daemon" "automation"
+	if [ -s $AUTOMATION_PID_FILE ] && kill -0 $(cat $AUTOMATION_PID_FILE) >/dev/null 2>&1; then
+	    log_progress_msg "apparently already running"
+	    log_end_msg 0
+	    exit 0
+	fi
+        automation_start
+	;;
+  stop)
+	log_daemon_msg "Stopping automation daemon" "automation"
+	start-stop-daemon --stop --quiet --oknodo --pidfile $AUTOMATION_PID_FILE
+	log_end_msg $?
+	rm -f $AUTOMATION_PID_FILE
+	;;
+
+  reload|force-reload|restart)
+	set +e
+        log_daemon_msg "Restarting automation daemon" "automation"
+	if [ -s $AUTOMATION_PID_FILE ] && kill -0 $(cat $AUTOMATION_PID_FILE) >/dev/null 2>&1; then
+	    start-stop-daemon --stop --quiet --oknodo --pidfile $AUTOMATION_PID_FILE || true
+	    sleep 1
+	else
+	    log_warning_msg "automation daemon not running, attempting to start."
+	    rm -f $AUTOMATION_PID_FILE
+	fi
+        automation_start
+	;;
+
+  status)
+	status_of_proc -p $AUTOMATION_PID_FILE "$DAEMON" automation
+	exit $?	# notreached due to set -e
+	;;
+  *)
+	echo "Usage: /etc/init.d/automation {start|stop|reload|force-reload|restart|status}"
+	exit 1
+esac
+
+exit 0
