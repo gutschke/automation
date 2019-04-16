@@ -65,7 +65,7 @@ class Lutron {
           for (let i = 0; i < monitor.args.length; ++i) {
             if (parts[i+1] !== monitor.args[i]) break;
             if (i === monitor.args.length-1) {
-              setTimeout(() => monitor.cb(...parts), 0);
+              setTimeout(() => monitor.cb(...parts.map(x => parseInt(x))), 0);
             }
           }
         }
@@ -95,6 +95,9 @@ class Lutron {
   async command(cmd) {
     console.log(`command(${cmd})`);
     try {
+      while (this.active) {
+        await new Promise(r => setTimeout(r, 20+Math.random()*40));
+      }
       ++this.active;
       if (this.socket)
         this.socket.setIdle(!this.active);
@@ -111,7 +114,9 @@ class Lutron {
         } else if (s === 'is an unknown command') {
           err = new Error(`${cmd} ${s}`);
         } else if (s === this.Prompts[2] /* GNET> */) {
-          rc = true;
+          if (rc === undefined) {
+            rc = true;
+          }
           break;
         }
       }
