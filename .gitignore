@@ -59,3 +59,7 @@ typings/
 
 # next.js build output
 .next
+
+# Cached RadioRA2 IP address
+.radiora2-addr.txt
+
