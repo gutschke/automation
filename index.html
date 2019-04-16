@@ -1,0 +1,119 @@
+<html>
+  <head>
+    <title>Home Automation</title>
+    <style>
+      div.switch {
+          display: inline-block;
+          font-family: Arial Narrow;
+          width: 150px;
+          height: 220px;
+          border: 2px solid #000;
+          border-radius: 10px;
+          padding: 40px 40px 40px 40px;
+          box-shadow: 10px 10px 5px grey;
+          margin: 10px;
+      }
+      div.switch > ul {
+          box-shadow: 1px 1px 1px grey;
+          padding: 0px;
+      }
+      div.switch > ul > li:not(:last-child):hover {
+          background-color: #aaa;
+      }
+      div.switch > ul > li > span:hover {
+          background-color: #aaa;
+      }
+      div.switch > ul > li:not(:last-child):before {
+          content: "\26AA\A0\A0";
+      }
+      div.switch > ul > li.on:not(:last-child):before {
+          content: "\1F535\A0\A0";
+      }
+      div.switch > ul > li:first-child {
+          border-top: 2px solid #000;
+      }
+      div.switch > ul > li:last-child {
+          border-bottom: 3px solid #000;
+      }
+      div.switch > ul > li {
+          list-style: none;
+          height: 21px;
+          border: 1px solid #000;
+          border-left: 2px solid #000;
+          border-right: 3px solid #000;
+          padding-left: 5px;
+          padding-top: 2px;
+      }
+      div.switch > ul > li:last-child {
+          padding: 0px;
+      }
+      div.switch > ul > li > span:first-child:before {
+          content: "\A0\21D3\A0";
+      }
+      div.switch > ul > li > span:last-child:before {
+          content: "\A0\21D1\A0";
+      }
+      div.switch > ul > li > span:not(:first-child) {
+          outline: 2px solid #000;
+      }
+      div.switch > ul > li > span {
+          padding-top: 2px;
+          text-align: center;
+          min-width: 72.5px;
+          min-height: 19px;
+          display: inline-block;
+      }
+    </style>
+    <script>
+      function monitorLEDs() {
+        let timer;
+        const socket = new WebSocket(location.origin.replace(/^http/, 'ws'));
+        socket.addEventListener('open', () => {
+          socket.send('subscribe');
+        });
+        socket.addEventListener('message', (event) => {
+          const msg = event.data.split(',');
+          const sw = document.getElementById(msg[0]);
+          const li = sw.getElementsByTagName('LI');
+          const leds = sw.getElementsByTagName('LI');
+          const led = leds[msg[1] - 1];
+          led.classList.add(msg[2] == 1 ? 'on' : 'off');
+          led.classList.remove(msg[2] != 1 ? 'on' : 'off');
+        });
+        socket.addEventListener('error', () => {
+          socket.close();
+          clearTimeout(timer);
+          timer = setTimeout(monitorLEDs, 5000);
+        });
+        socket.addEventListener('close', () => {
+          clearTimeout(timer);
+          timer = setTimeout(monitorLEDs, 5000);
+        });
+      }
+
+      function main() {
+        let xhr = new XMLHttpRequest();
+        xhr.open('GET', location.origin.replace(/\/.*/, '/keypads.json'), true);
+        xhr.responseType = 'json';
+        xhr.onload = () => {
+          console.log(xhr.status);
+          if (xhr.status === 200) {
+            html = '';
+            for (const keypad in xhr.response) {
+              html += `<div class="switch" id="${keypad}"><ul>`;
+              const k = xhr.response[keypad];
+              for (let button = 1; button <= 6; ++button) {
+                html += `<li>${k.buttons[button] || ''}</li>`;
+              }
+              html += '<li><span></span><span></span></li></ul></div>';
+            }
+            document.body.innerHTML = html;
+            monitorLEDs();
+          }
+        };
+        xhr.send();
+      }
+    </script>
+  </head>
+  <body onload="main()">Loading...</body>
+</html>
