@@ -1,5 +1,6 @@
 <html>
   <head>
+    <meta charset="utf-8">
     <title>Home Automation</title>
     <style>
       div.switch {
@@ -15,6 +16,7 @@
       }
       div.switch > ul {
           box-shadow: 1px 1px 1px grey;
+          border-bottom: 2px solid black;
           padding: 0px;
       }
       div.switch > ul > li:not(:last-child):hover {
@@ -32,9 +34,6 @@
       div.switch > ul > li:first-child {
           border-top: 2px solid #000;
       }
-      div.switch > ul > li:last-child {
-          border-bottom: 3px solid #000;
-      }
       div.switch > ul > li {
           list-style: none;
           height: 21px;
@@ -44,24 +43,32 @@
           padding-left: 5px;
           padding-top: 2px;
       }
-      div.switch > ul > li:last-child {
-          padding: 0px;
-      }
       div.switch > ul > li > span:first-child:before {
           content: "\A0\21D3\A0";
       }
       div.switch > ul > li > span:last-child:before {
           content: "\A0\21D1\A0";
       }
-      div.switch > ul > li > span:not(:first-child) {
-          outline: 2px solid #000;
+      div.switch > ul > li:last-child {
+          display: flex;
+          flex-flow: row nowrap;
+          justify-content: space-evenly;
+          padding: 0px;
       }
       div.switch > ul > li > span {
-          padding-top: 2px;
+          width: 100%;
+          height: 100%;
           text-align: center;
-          min-width: 72.5px;
-          min-height: 19px;
-          display: inline-block;
+      }
+      div.switch > ul > li > span {
+          border-left:  1px solid #000;
+          border-right: 1px solid #000;
+      }
+      div.switch > ul > li > span:first-child {
+          border-left:  0px;
+      }
+      div.switch > ul > li > span:last-child {
+          border-right: 1px;
       }
     </style>
     <script>
