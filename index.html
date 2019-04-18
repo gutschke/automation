@@ -108,7 +108,12 @@
       function monitorLEDs() {
         let timer;
         // Send a WebSocket request to be notified of LED status changes.
-        socket = new WebSocket(location.origin.replace(/^http/, 'ws'));
+        try {
+          socket = new WebSocket(location.origin.replace(/^http/, 'ws'));
+        } catch (e) {
+          timer = setTimeout(monitorLEDs, 5000);
+          return;
+        }
         socket.onopen = () => socket.send('subscribe');
         socket.onmessage = (event) => {
           // Split the status message into switch integration id, and button
@@ -118,8 +123,8 @@
           const li = sw.getElementsByTagName('LI');
           const leds = sw.getElementsByTagName('LI');
           const led = leds[msg[1] - 1];
-          if (msg[2] === 1) led.classList.add('on');
-          else              led.classList.remove('on');
+          if (msg[2] == 1) led.classList.add('on');
+          else             led.classList.remove('on');
         };
         // In case of error or closed connection, retry a little while later.
         socket.onerror = socket.onclose = () => {
