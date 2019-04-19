@@ -232,6 +232,8 @@ class Automation {
             connection.on('message', (msg) => {
               if (msg.utf8Data === 'subscribe') {
                 this.subscribe(connection);
+              } else if (msg.utf8Data.startsWith('#DEVICE,')) {
+                this.lutron.command(msg.utf8Data);
               }
             }).on('error', () => {
               connection.close();
