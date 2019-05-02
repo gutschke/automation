@@ -1,4 +1,6 @@
+const ioctl      = require('ioctl');
 const SerialPort = require('serialport');
+const usleep     = require('sleep').usleep;
 
 /**
  * The Enttec object provides methods for communicating with an Enttec OpenDMX
@@ -57,10 +59,14 @@ class Enttec {
       return;
     }
     const now = Date.now();
-    // DMX likes to receive all dimmer values at least once per second.
-    // According to the Wikipedia page, that also ensures that several
-    // other timing parameters stay within the expected range.
-    var tm = 1000;
+    // DMX likes to receive all dimmer values at least once per second,
+    // possibly a lot more frequently. According to the Wikipedia page,
+    // that also ensures that several other timing parameters stay within
+    // the expected range. In order to keep CPU usage within reasonable
+    // limits, and in order to not block the mainthread for too long (talking
+    // to the serial port has some parts that run synchronously), we find
+    // a compromise and only update every couple of 100ms.
+    var tm = 400;
     // Change dimmer values as they fade to their new setting. This is
     // the only place where we actually adjust dimmers.
     var maxSlot = this.minNumberOfSlots;
@@ -192,39 +198,34 @@ class Enttec {
     this.log(`sendDMXPackage(${[...data]})`);
     this.writing = true;
     try {
-      await this.openPort();
-      // The NodeJS SerialPort implementation cannot delay changes to the baud-
-      // rate until after the port has drained. So, we have to do this in two
-      // system calls. Even more problematically though, the FTDI kernel driver
-      // can drain its buffers, but it cannot wait for the device's buffers to
-      // empty. A bit of a delay helps make our code more conservative.
+      if (!this.serial) await this.openPort();
+      // Turning on the break condition drains the serial port. This can take
+      // up to 22ms. We don't really want to stop the event loop for that long.
+      // So, if there still is data that might be in flight, return to the
+      // event loop and come back here at a later time.
       const drainMs = 11*(this.lastByteCount || 0)/250 -
-                      (this.lastWrite && Date.now() - this.lastWrite || 0);
+            (this.lastWrite && (Date.now() - this.lastWrite) || 0);
       if (drainMs > 0) {
         await new Promise(r => setTimeout(r, drainMs));
       }
-      this.lastByteCount = data.length;
-      await this.serial.drain();
       // The minimum break time should be 92µs, and the minimum make-after-break
-      // time should be 12µs, but longer times are acceptable. Timing in
-      // Javascript can be fragile, so using the hardware to assist is
-      // preferable. We can achieve this by slowing down the baudrate and
-      // sending a NUL character. Afterwards, we still have to drain the output,
-      // as the hardware can't handle baudrate changes while data is on the fly.
-      // A 90kBaud transmission rate results in a 100µs break, and a 22µs
-      // make-after-break. In practice, the system calls will introduce delays
-      // and the make-after-break is likely longer. That's OK.
-      await this.serial.update({ baudRate: 90000 });
-      await this.serial.write(Buffer.from([ 0 ]));
-      await new Promise(r => setTimeout(r, 11/90));
-      await this.serial.drain();
-      await this.serial.update({ baudRate: 250000 });
-      this.lastWrite = Date.now();
+      // time should be 12µs, but longer times are acceptable. Microseconds are
+      // so fast that with our embedded hardware there really is no point to
+      // return to the event loop. It makes more sense to wait synchronously.
+      // In fact, on the Raspberry Pi Zero W, a basic ioctl() call frequently
+      // takes on the order of 500µs anyway. On this particular hardware, we
+      // can safely omit the calls to usleep() and timing will still be OK.
+      ioctl(this.serial.binding.fd, 0x5427 /* TIOCSBRK */);
+      // usleep(92);
+      ioctl(this.serial.binding.fd, 0x5428 /* TIOCCBRK */);
+      // usleep(12);
       return new Promise((resolve, reject) => {
+        this.lastByteCount = data.length;
         this.serial.write(data, (err) => {
           this.writing = false;
           if (err) reject(err);
-          else resolve(); }); });
+          else resolve(); });
+        this.lastWrite = Date.now(); });
     } catch (err) {
       this.writing = false;
       throw err;
