@@ -1,0 +1,12 @@
+[Unit]
+Description=Home Automation Daemon
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/automation
+ExecStart=/home/pi/automation/automation.js
+StandardOutput=journal
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
