@@ -271,22 +271,23 @@ Lutron.AsyncSocket = class {
   async openSocket() {
     if (this.socket !== undefined) return;
     this.socket = net.connect(this.port, this.host);
+    const that = this;
     return new Promise((resolve, reject) => {
       function err(msg) {
-        this.log(`onError("${msg}")`);
+        that.log(`onError("${msg}")`);
         const error = new Error(msg);
         if (reject) {
           const r = reject;
           reject = null;
           r(error);
         } else {
-          const s = this.socket;
-          this.socket = null;
+          const s = that.socket;
+          that.socket = null;
           if (s) s.destroy();
         }
-        if (this.reader) {
-          const r = this.reader;
-          this.reader = null;
+        if (that.reader) {
+          const r = that.reader;
+          that.reader = null;
           if (r.reject) {
             r.reject(error);
           }
