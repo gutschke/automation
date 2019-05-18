@@ -28,7 +28,7 @@ export PATH="${PATH:+$PATH:}/usr/sbin:/sbin"
 
 automation_start() {
     if start-stop-daemon --start --quiet --background \
-        --pidfile $AUTOMATION_PID_FILE --make-pidfile \
+        -d ${DAEMON%/*} --pidfile $AUTOMATION_PID_FILE --make-pidfile \
         --exec $DAEMON --
     then
         rc=0
