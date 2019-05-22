@@ -6,11 +6,13 @@ class Lutron {
    * Create a new connection to the given host. Logs in with the username
    * and password when needed. In case of error, fails the operation and
    * then re-opens a connection on the next operation.
+   * @param {function} cfg - configure the controller after establishing conn.
    * @param {string} gateway - Hostname or ip address.
    * @param {string} [username] - The account name to use for authentication.
    * @param {string} [password] - The account password.
    */
-  constructor(gateway, username, password) {
+  constructor(cfg, gateway, username, password) {
+    this.cfg = cfg;
     this.gateway = gateway;
     this.username = username || 'lutron';
     this.password = password || 'integration';
@@ -42,6 +44,7 @@ class Lutron {
           if (p !== this.Prompts[1]) continue;
           s.write(this.password + '\r\n');
           if (await s.read() !== this.Prompts[2]) continue;
+          await this.cfg();
           break;
         }
         this.socket = s;
