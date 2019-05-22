@@ -187,8 +187,6 @@ class Automation {
             if (o.DeviceType !== undefined &&
                 (o.DeviceType.endsWith('_KEYPAD') ||
                  o.DeviceType === 'MAIN_REPEATER')) {
-              console.log(o);
-              console.log(this.parent.node.Components[0].Component);
               // Extract the keypad id and label.
               const id = parseInt(o.IntegrationID);
               kp[id] = { label: o.Name, leds: { }, buttons: { },
@@ -198,7 +196,6 @@ class Automation {
                 if (button.Button === undefined) continue;
                 const num = button.$.ComponentNumber;
                 kp[id].buttons[num] = button.Button[0].$.Engraving;
-                if (num >= 18) continue;
                 kp[id].leds[num] = button.Button[0].$.LedLogic;
                 try {
                   for (const preset of button.Button[0].Actions[0].Action[0].
