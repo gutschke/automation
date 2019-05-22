@@ -37,8 +37,9 @@ class Automation {
         (dimmer <= (this.dimmers.MAXDIMTOGLOW || 0)
          ? this.enttec.setDimToGlow : this.enttec.setDimmer).
           call(this.enttec, dimmer, this.fadeTime,
-               this.dimmerState[dimmer] && flags === this.Flags.TOGGLE ||
-               flags === this.Flags.OFF ?
+               this.dimmerState[dimmer] &&
+               (flags & this.Flags.MASK) === this.Flags.TOGGLE ||
+               (flags & this.Flags.MASK) === this.Flags.OFF ?
                this.dimmerState[dimmer] = 0 : this.dimmerState[dimmer] = 1);
       }
       this.buttons[e.id].lastDimmers = [...dimmers];
@@ -149,7 +150,11 @@ class Automation {
     }
     if (req.url === '/keypads.json') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(this.keypads), 'utf-8');
+      res.end(JSON.stringify(Object.entries(this.keypads).
+                             filter(e => Object.keys(e[1].buttons).length < 10).
+                             reduce((acc, e) => { acc[e[0]] = e[1];
+                                                  return acc; }, {})),
+                             'utf-8');
     } else {
       res.writeHead(404, { 'Content-Type': 'text/html' });
       res.end('<html><head><title>Error</title><body>Not found</body></html>',
