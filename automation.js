@@ -5,7 +5,6 @@ const Fs       = require('fs');
 const Http     = require('http');
 const Lutron   = require('./lutron');
 const Path     = require('path');
-const Relay    = require('./relay');
 const Shell    = require('shelljs').exec;
 const Traverse = require('traverse');
 const WSSrv    = require('websocket').server;
@@ -15,7 +14,7 @@ class Automation {
   constructor() {
     this.enttec = new Enttec();
     this.radiora2 = Shell('./find-radiora2.sh', { silent: true }).stdout;
-    this.lutron = new Lutron(this.radiora2);
+    this.lutron = new Lutron(_ => this.configureRadioRA2(), this.radiora2);
     this.dimmerState = { };
     this.htmlClients = [ ];
     this.keypads = { };
@@ -28,6 +27,7 @@ class Automation {
       const site = require('./site.js');
       site.call(this);
     } catch (err) {
+      console.log(err);
     }
   }
 
@@ -67,7 +67,8 @@ class Automation {
     for (let i = 0; i < followers.length; i += 2) {
       this.lutron.command(
         `#OUTPUT,${followers[i]},1,${
-                   Number.parseFloat(event[3])*followers[i+1]/100}`);
+                   Number.parseFloat(event[3])*followers[i+1]/100}`).
+        catch(_ => 0);
     }
   }
 
@@ -90,9 +91,10 @@ class Automation {
         // The Lutron RadioRA2 controller has on occasion be observed to report
         // the wrong status change. Double-check a little while later.
         if (this.keypads[id].leds[button] !== undefined) {
-          setTimeout(
-            _ => this.lutron.command(`?DEVICE,${id},${button+80},${event}`),
-            500);
+          setTimeout(_ =>
+                     this.lutron.command(`?DEVICE,${id},${button+80},${event}`).
+                     catch(_ => 0),
+                     500);
         }
         this.keypads[id].leds[button] = status;
         for (const client of this.htmlClients) {
@@ -170,44 +172,69 @@ class Automation {
     }
   }
 
-  async main() {
+  retrieveInitialConfiguration() {
     // Obtain the site's database in XML format and extract useful information.
     Http.get(`http://${this.radiora2}/DbXmlInfo.xml`, res => {
       let data = '';
       let kp = { };
       res.setEncoding('utf8');
       res.on('data', chunk => data += chunk);
+      res.on('error', () => 0); /***/
       res.on('end', () => XML2JS.parseString(data, (err, result) => {
         if (!err) {
           // Traverse the XML database and find all keypads.
           Traverse(result).forEach(((that, kp) => { return function(o) {
             if (o.DeviceType !== undefined &&
-                o.DeviceType.endsWith('_KEYPAD')) {
+                (o.DeviceType.endsWith('_KEYPAD') ||
+                 o.DeviceType === 'MAIN_REPEATER')) {
+              console.log(o);
+              console.log(this.parent.node.Components[0].Component);
               // Extract the keypad id and label.
               const id = parseInt(o.IntegrationID);
-              kp[id] = { label: o.Name, leds: { }, buttons: { } };
+              kp[id] = { label: o.Name, leds: { }, buttons: { },
+                         loads: { } };
               // Find all buttons and their labels.
               for (const button of this.parent.node.Components[0].Component) {
                 if (button.Button === undefined) continue;
                 const num = button.$.ComponentNumber;
-                const label = button.Button[0].$.Engraving;
-                kp[id].buttons[num] = label;
+                kp[id].buttons[num] = button.Button[0].$.Engraving;
+                if (num >= 18) continue;
+                kp[id].leds[num] = button.Button[0].$.LedLogic;
+                try {
+                  for (const preset of button.Button[0].Actions[0].Action[0].
+                                              Presets[0].Preset[0].
+                                              PresetAssignments[0].
+                                              PresetAssignment) {
+                    if (typeof kp[id].loads[num] === 'undefined') {
+                      kp[id].loads[num] = { };
+                    }
+                    kp[id].loads[num][preset.IntegrationID[0]] =
+                      parseInt(preset.Level[0])/100;
+                  }
+                } catch (_) { }
               }
+              console.log(kp[id]);
               // Monitor changes to buttons and LEDs.
               that.lutron.monitor('~DEVICE', id, (...args) =>
                 that.buttonPressedOrLEDChanged.apply(that, args));
               // Request initial LED status.
-              for (let i = 1; i <= 6; ++i) {
-                that.lutron.command(`?DEVICE,${id},${80+i},9`);
+              if (o.DeviceType.endsWith('_KEYPAD')) {
+                for (let i = 1; i <= 6; ++i) {
+                  that.lutron.command(`?DEVICE,${id},${80+i},9`).
+                    catch(_ => 0);
+                }
               }
             }
           };})(this, kp));
           this.keypads = kp;
         }}));});
+  }
 
+  async configureRadioRA2() {
     // Tell the RadioRA2 controller that we want to know about all events.
     for (const type of [ 2, 3, 4, 5, 6, 8, 17, 18, 23 ]) {
-      this.lutron.command(`#MONITORING,${type},1`);
+      this.lutron.command(`#MONITORING,${type},1`).
+        catch(_ => 0);
     }
 
     // For all dummy loads, monitor status changes.
@@ -215,6 +242,10 @@ class Automation {
       this.lutron.monitor('~OUTPUT', id , 1,
                           (...args) => this.loads[id].cb(args));
     }
+  }
+
+  async main() {
+    this.retrieveInitialConfiguration();
 
     // Create web server that can serve static files and dynamic JSON data.
     const http = Http.createServer((req, res) => {
@@ -222,7 +253,8 @@ class Automation {
         this.serveJSON(req, res);
       } else {
         this.serveStaticFile(req, res);
-      }}).listen(8080);
+      }}).listen(8080)
+          .on('clientEror', (err, socket) => socket.end());
 
     // Add a websocket server that bridges between browser and RadioRA2.
     const wsServer = new WSSrv({ httpServer: http,
@@ -233,7 +265,7 @@ class Automation {
               if (msg.utf8Data === 'subscribe') {
                 this.subscribe(connection);
               } else if (msg.utf8Data.startsWith('#DEVICE,')) {
-                this.lutron.command(msg.utf8Data);
+                this.lutron.command(msg.utf8Data).catch(_ => 0);
               }
             }).on('error', () => {
               connection.close();
@@ -249,6 +281,7 @@ class Automation {
 Automation.prototype.fadeTime = .4;
 Automation.prototype.Flags = {
   OFF: 1, ON: 2, TOGGLE: 3, SCENE: 4,
+  LED: 256, DIM: 512, MASK: 255,
 };
 
 if (require.main === module) {
