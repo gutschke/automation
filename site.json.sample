@@ -1,0 +1,56 @@
+{
+  "GPIO": {
+    // Symbolic names for GPIO inputs and outputs. Inputs can be inverted
+    // by prepending "!".
+    "!DOORISOPEN":  21,
+    "ACTIVATEFAN":  22,
+    "COMPUTERISON": 23,
+    "RESTARTMODEM": 24,
+    "PLAYJINGLE":   25
+  },
+  "DMX": {
+    // Define DMX dimmers.
+    // The first vector contains the DMX id(s) of the dimmer(s).
+    // The second vector, if any, contains the exponent for the dimmer curve.
+    // The third number, if any, is the low trim value.
+    "LIVINGROOM": [ [1, 2], [ 2.1, 1.1 ] ],
+    "BEDROOM":    [ [3], [ 1.1 ], 1 ],
+    "DEN":        [ [4] ]
+  },
+  "KEYPAD": {
+    "1": { // Hallway Keypad (use the Lutron integration id)
+       // Each keypad has buttons labeled "1" through "6"
+       "4": { // "RELAY" configures an if-then rule. If the condition in the
+              // first element of the vector is met, simulate pressing the
+              // button listed in the second element of the vector.
+              // It is ok to leave the condition an empty string. Negated
+              // conditions start with a "!".
+              "RELAY": [ "!DOORISOPEN", "ACTIVATEFAN" ],
+              // "DMX" defines a scene with predefined output levels in
+              // the range 0 .. 100.
+              "DMX": { "LIVINGROOM": 100, // Set one DMX dimmer to 100%.
+                       "DEN":         30  // And the other one to 30%.
+                       // The Lutron software determines whether this button
+                       // acts as a toggle or whether it selects a scene.
+                       // We honor this setting and it doesn't need to be
+                       // specified in the JSON file. Similarly, we refer to
+                       // the Lutron settings for determining LED policies.
+                     } },
+       "5": { "RELAY": [ "COMPUTERISON", "RESTARTMODEM" ] },
+       "6": { "RELAY": [ "", "PLAYJINGLE" ],
+              "DMX": { "LIVINGROOM": 0,
+                       "DEN":        0,
+                       "BEDROOM":    0 } } }
+    "2": { // Mud Room Pico Remote (use Lutron integration id)
+           // For Pico Remotes, buttons are labelled "2" through "4".
+       "2": // Pico Remotes natively can only activate different scenes,
+            // but cannot toggle outputs. We can simulate that function even
+            // for Lutron devices.
+            // We can also simulate pressing the button on a different
+            // Lutron keypad. The latter makes it easy to mirror a complex
+            // device without having to write a lot of rules here.
+            { "TOGGLE": [ 3 ] },     // Use Lutron integration id of RRD switch.
+       "3": { "DEVICE": [ 1, 1 ] },  // Use Lutron integration id of keypad.
+       "4": { "DEVICE": [ 1, 6 ] } } // The second value is the button number.
+  }
+}

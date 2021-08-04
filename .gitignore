@@ -69,6 +69,7 @@ json.hpp
 # Cached RadioRA2 schema file for local site
 .lutron.xml
 
-# Binary files
+# Binary files and local files
 .build
 automation
+site.json
