@@ -4,7 +4,7 @@ Description=Home Automation Daemon
 [Service]
 Type=simple
 WorkingDirectory=/home/pi/automation
-ExecStart=/home/pi/automation/automation.js
+ExecStart=/home/pi/automation/automation
 StandardOutput=journal
 Restart=on-failure
 
