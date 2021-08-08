@@ -73,4 +73,4 @@ json.hpp
 .build
 automation
 site.json
-.ra2
+*.ra2
