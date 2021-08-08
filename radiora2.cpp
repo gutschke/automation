@@ -31,43 +31,60 @@ RadioRA2::RadioRA2(Event& event,
     reconnect_(SHORT_REOPEN_TMO),
     checkStarted_(0),
     checkFinished_(0),
+    uncertain_(0),
     schemaSock_(-1) {
   setlocale(LC_NUMERIC, "C");
   onInit_.push_back(init);
 
+  // The health check not only makes sure that we re-establish a connection
+  // whenever it fails, but it also leaves a persistent object that keeps the
+  // event loop from exiting.
+  healthCheck();
+}
+
+RadioRA2::~RadioRA2() {
+}
+
+void RadioRA2::healthCheck() {
   // If the connection closed unexpectedly, retry opening it every so often.
   // If it already is open, verify that it still responds to regular commands.
   // If it doesn't, close it and open it again. That usually resets things.
   // This is a slightly higher-level health check than the very basic check
   // that the Lutron object performs by regularly sending a CRLF pair.
-  const auto healthCheck =
-    Util::rec([this, event = &event](auto&& healthCheck) -> void {
-    if (!lutron_.isConnected()) {
-      checkStarted_ = checkFinished_ = 0;
-      lutron_.ping([this]() {
-        reconnect_ = SHORT_REOPEN_TMO;
-        checkFinished_ = Util::millis(); });
-      reconnect_ = std::min(LONG_REOPEN_TMO, 2*reconnect_);
-    } else {
+  if (!lutron_.isConnected()) {
+    checkStarted_ = checkFinished_ = 0;
+    lutron_.ping([this]() {
       reconnect_ = SHORT_REOPEN_TMO;
-      const auto now = Util::millis();
-      if (checkStarted_ && (now - checkStarted_) > ALIVE_CMD_TMO) {
-        lutron_.closeSock();
-        checkStarted_ = checkFinished_ = 0;
-      } else if (checkFinished_ &&
-                 (now - checkFinished_) > ALIVE_INTERVAL) {
-        checkStarted_ = now;
-        lutron_.ping([this]() {
-          checkFinished_ = Util::millis();
-          checkStarted_ = 0; });
+      checkFinished_ = Util::millis(); });
+    reconnect_ = std::min(LONG_REOPEN_TMO, 2*reconnect_);
+  } else {
+    reconnect_ = SHORT_REOPEN_TMO;
+    const auto now = Util::millis();
+    if (checkStarted_ && (now - checkStarted_) > ALIVE_CMD_TMO) {
+      lutron_.closeSock();
+      checkStarted_ = checkFinished_ = 0;
+    } else if (checkFinished_ &&
+               (now - checkFinished_) > ALIVE_INTERVAL) {
+      checkStarted_ = now;
+      lutron_.ping([this]() {
+        checkFinished_ = Util::millis();
+        checkStarted_ = 0; });
+    }
+    if (!uncertain_) {
+      uncertain_ = now;
+    } else if (now - uncertain_ > 15*60*1000) {
+      uncertain_ = now;
+      for (const auto& [ _, dev ] : devices_) {
+        for (const auto& [ _, btn ] : dev.components) {
+          if (btn.uncertain) {
+            lutron_.command(fmt::format("#DEVICE,{},{},9,{}",
+              btn.id, btn.led, btn.ledState ? 1 : 0));
+          }
+        }
       }
     }
-    event->addTimeout(reconnect_, [=]() { healthCheck(); });
-  });
-  healthCheck();
-}
-
-RadioRA2::~RadioRA2() {
+  }
+  event_.addTimeout(reconnect_, [this]() { healthCheck(); });
 }
 
 void RadioRA2::readLine(const std::string& line) {
@@ -123,6 +140,7 @@ void RadioRA2::readLine(const std::string& line) {
             *endPtr++ == ',' && (*endPtr == '0' || *endPtr == '1') &&
             !endPtr[1]) {
           led->second.ledState = *endPtr == '1';
+          led->second.uncertain = (*endPtr != '0' && *endPtr != '1')||endPtr[1];
         }
       }
     }
@@ -143,8 +161,9 @@ void RadioRA2::readLine(const std::string& line) {
       // the implementation of an output that is *also* natively handled by
       // the Lutron controller.
       const std::string& alias = fmt::format("{}{}", ALIAS, id);
+      const std::string& dmxalias = fmt::format("{}{}", DMXALIAS, id);
       for (auto& [name, level, cb] : namedOutput_) {
-        if (name == alias) {
+        if (name == alias || name == dmxalias) {
           if (level != out->second.level) {
             event_.runLater([=]() { cb(out->second.level); });
           }
@@ -561,7 +580,7 @@ int RadioRA2::getCurrentLevel(int id) {
   // numbers refer to the Lutron integration id. Negative numbers are our
   // own virtual outputs which can map to DMX dimmers or GPIO output devices.
   if (id < 0 && -id <= (int)namedOutput_.size()) {
-    return std::get<1>(namedOutput_[-id-1]);
+    return std::min(std::max(std::get<1>(namedOutput_[-id-1]), 0), 10000);
   } else {
     const auto& out = outputs_.find(id);
     if (out != outputs_.end()) {
@@ -575,21 +594,21 @@ int RadioRA2::getCurrentLevel(int id) {
 
 void RadioRA2::recomputeLEDs() {
   // Iterate over all keypads and LEDs and compute the expected LED state.
-  for (const auto& device : devices_) {
-    for (const auto& component : device.second.components) {
+  for (const auto& [_, device] : devices_) {
+    for (const auto& [_, component] : device.components) {
       // We only support LED_MONITOR and LED_SCENE at this time.
-      if (component.second.led >= 0 &&
-          (component.second.logic == LED_MONITOR ||
-           component.second.logic == LED_SCENE)) {
-        bool ledState = component.second.logic == LED_SCENE;
+      if (component.led >= 0 &&
+          (component.logic == LED_MONITOR ||
+           component.logic == LED_SCENE)) {
+        bool ledState = component.logic == LED_SCENE;
         bool empty = true;
-        for (const auto& as : component.second.assignments) {
+        for (const auto& as : component.assignments) {
           int level = getCurrentLevel(as.id);
           if (level < 0) {
             continue;
           }
           empty = false;
-          if (component.second.logic == LED_MONITOR && level > 0) {
+          if (component.logic == LED_MONITOR && level > 0) {
             // LED is on when at least one device is at any level
             ledState = true;
           } else if (level != as.level) {
@@ -602,14 +621,12 @@ void RadioRA2::recomputeLEDs() {
         ledState &= !empty;
 
         // If there is a mismatch in LED status, fix that now.
-        if (ledState != component.second.ledState) {
-          DBG("LED \"" << component.second.name << "\" (" <<
-              component.second.id << ") on \"" << device.second.name <<
+        if (ledState != component.ledState) {
+          DBG("LED \"" << component.name << "\" (" <<
+              component.id << ") on \"" << device.name <<
               "\" should be " << (ledState ? "on" : "off"));
           lutron_.command(fmt::format("#DEVICE,{},{},9,{}",
-                                      device.second.id,
-                                      component.second.led,
-                                      ledState ? 1 : 0));
+            device.id, component.led, ledState ? 1 : 0));
         }
       }
     }

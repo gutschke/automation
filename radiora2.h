@@ -14,6 +14,7 @@
 class RadioRA2 {
  public:
   inline static const std::string ALIAS = "RRA2:";
+  inline static const std::string DMXALIAS = "DMX:";
 
   RadioRA2(Event& event,
            std::function<void ()> init = nullptr,
@@ -149,7 +150,7 @@ class RadioRA2 {
     Component(int id, int led, const std::string& name,
               LedLogic logic, ButtonType type)
       : id(id), led(led), name(name), logic(logic), type(type),
-        ledState(false) { }
+        ledState(false), uncertain(false) { }
     bool operator==(const Component& o) const {
       if (id == o.id && led == o.led && logic == o.logic && name == o.name) {
         // We use the comparison operator to check whether the schema on the
@@ -177,6 +178,7 @@ class RadioRA2 {
     ButtonType              type;
     std::vector<Assignment> assignments;
     bool                    ledState;
+    bool                    uncertain;
   };
 
   struct Device {
@@ -207,6 +209,7 @@ class RadioRA2 {
     int         level;
   };
 
+  void healthCheck();
   void readLine(const std::string& line);
   void init(std::function<void (void)> cb);
   void closed();
@@ -229,6 +232,7 @@ class RadioRA2 {
   unsigned int reconnect_;
   unsigned int checkStarted_;
   unsigned int checkFinished_;
+  unsigned int uncertain_;
   int schemaSock_;
   std::map<int, Device> devices_;
   std::map<int, Output> outputs_;

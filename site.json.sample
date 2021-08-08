@@ -10,12 +10,15 @@
   },
   "DMX": {
     // Define DMX dimmers.
-    // The first vector contains the DMX id(s) of the dimmer(s).
+    // If the first optional entry is an integer, it is the integration id
+    // of a Lutron dimmer that should be mapped to this DMX fixture; this
+    // dimmer can be a dummy device that doesn't physically exist.
+    // After that, the first vector contains the DMX id(s) of the dimmer(s).
     // The second vector, if any, contains the exponent for the dimmer curve.
     // The third number, if any, is the low trim value.
     "LIVINGROOM": [ [1, 2], [ 2.1, 1.1 ] ],
     "BEDROOM":    [ [3], [ 1.1 ], 1 ],
-    "DEN":        [ [4] ]
+    "DEN":        [ 11, [4] ]
   },
   "KEYPAD": {
     "1": { // Hallway Keypad (use the Lutron integration id)
@@ -29,7 +32,7 @@
               // "DMX" defines a scene with predefined output levels in
               // the range 0 .. 100.
               "DMX": { "LIVINGROOM": 100, // Set one DMX dimmer to 100%.
-                       "DEN":         30  // And the other one to 30%.
+                       "BEDROOM":     30  // And the other one to 30%.
                        // The Lutron software determines whether this button
                        // acts as a toggle or whether it selects a scene.
                        // We honor this setting and it doesn't need to be
@@ -39,7 +42,6 @@
        "5": { "RELAY": [ "COMPUTERISON", "RESTARTMODEM" ] },
        "6": { "RELAY": [ "", "PLAYJINGLE" ],
               "DMX": { "LIVINGROOM": 0,
-                       "DEN":        0,
                        "BEDROOM":    0 } } }
     "2": { // Mud Room Pico Remote (use Lutron integration id)
            // For Pico Remotes, buttons are labelled "2" through "4".

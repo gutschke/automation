@@ -5,7 +5,7 @@
 #include <functional>
 #include <string>
 
-#if 0 || defined(NDEBUG)
+#if defined(NDEBUG)
 #define DBG(x) do { } while (0)
 #else
 #include <iostream>
@@ -32,7 +32,7 @@ namespace Util {
     decltype(auto) operator()(Ts&&... ts) const {
       return f(*this, std::forward<Ts>(ts)...); }
     template <class... Ts>
-    decltype(auto) operator()(Ts&&... ts)  {
+    decltype(auto) operator()(Ts&&... ts) {
       return f(*this, std::forward<Ts>(ts)...); }
   };
   template <class F> recursive_(F) -> recursive_<F>;

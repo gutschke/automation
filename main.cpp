@@ -25,9 +25,10 @@ static int childFd[2] = { -1, -1 };
 
 static void setDMX(DMX& dmx, const json& dimmer, int level) {
   // Apply a dimmer curve and low trim level. Also, fade the color temperature.
-  const auto& ids = dimmer.size() ? dimmer[0] : "[]"_json;
-  const auto& curve = dimmer.size() > 1 ? dimmer[1] : "[]"_json;
-  const auto& trim = dimmer.size() > 2 ? dimmer[2] : "0"_json;
+  unsigned offset = !!(dimmer.size() > 0 && dimmer[0].is_number());
+  const auto& ids = dimmer.size() > offset ? dimmer[offset] : "[]"_json;
+  const auto& curve = dimmer.size() > offset+1 ? dimmer[offset+1] : "[]"_json;
+  const auto& trim = dimmer.size() > offset+2 ? dimmer[offset+2] : "0"_json;
   for (unsigned i = 0; i < (ids.is_array() ? ids.size() : 0); i++) {
     if (!ids[i].is_number()) continue;
     int id = ids[i].get<int>();
@@ -54,6 +55,20 @@ static void readConfig(const std::string& fname,
     if (site.is_discarded()) {
       DBG("Failed to parse \"" << fname << "\"");
     } else {
+      // Iterate over all "DMX" object definitions and add virtual outputs
+      // for DMX fixtures that are represented by dummy objects in the
+      // Lutron system.
+      const auto& dmxIds = site["DMX"];
+      for (const auto& [name, params] : dmxIds.items()) {
+        if (params.size() <= 0 || !params[0].is_number()) {
+          continue;
+        }
+        ra2.addOutput(
+          fmt::format("{}{}", RadioRA2::DMXALIAS, params[0].get<int>()),
+          [&dmx, params](int level) {
+            setDMX(dmx, params, level);
+          });
+      }
       // Iterate over all "KEYPAD" object definitions and add new assignments
       // to the various keypad buttons.
       const auto& keypad = site["KEYPAD"];
