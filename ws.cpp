@@ -49,6 +49,7 @@ WS::~WS() {
   if (ctx_) {
     lws_context_destroy(ctx_);
   }
+  event_->removeLoop(loop_);
 }
 
 int WS::init(lws_context *ctx, void *_loop, int tsi) {
