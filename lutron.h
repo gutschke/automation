@@ -55,7 +55,7 @@ class Lutron {
                      std::function<void (void)> err);
   void processLine(const std::string& line);
   void readLine();
-  void pollIn(std::function<bool (void)> cb);
+  void pollIn(std::function<bool (pollfd *)> cb);
   void advanceKeepAliveMonitor();
 
   class Timeout {

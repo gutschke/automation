@@ -302,7 +302,7 @@ void Lutron::sendData(const std::string& data,
         // the Event::runLater() handler to avoid any unexpected state changes.
         event_.runLater([=, this]() {
           event_.removePollFd(sock_);
-          event_.addPollFd(sock_, POLLOUT, [=, this]() {
+          event_.addPollFd(sock_, POLLOUT, [=, this](auto) {
             event_.removePollFd(sock_);
             atPrompt_ = false;
             DBG("write(\"" << Util::trim(data) << "\")");
@@ -438,7 +438,7 @@ void Lutron::login(std::function<void (void)> cb,
           // socket becomes writable then check whether the connection has
           // been established asynchronously.
           if (errno == EINPROGRESS || errno == EWOULDBLOCK) {
-            event_.addPollFd(sock_, POLLOUT, [=, this]() {
+            event_.addPollFd(sock_, POLLOUT, [=, this](auto) {
               event_.removePollFd(sock_);
               socklen_t addrlen = 0;
               if (getpeername(sock_, (struct sockaddr *)"", &addrlen) < 0) {
@@ -486,7 +486,7 @@ void Lutron::login(std::function<void (void)> cb,
       pclose(fp);
     });
     g_ = "";
-    event_.addPollFd(fileno(fp), POLLIN, [=, this, &gateway = this->g_]() {
+    event_.addPollFd(fileno(fp), POLLIN, [=, this, &gateway = this->g_](auto) {
       char buf[64];
       const auto rc = read(fileno(fp), buf, sizeof(buf));
       // If we reached the end of the file, use this as the server to
@@ -665,7 +665,7 @@ void Lutron::readLine() {
   // If we don't have enough data for a full line just yet, read more bytes
   // from the stream and then try again.
   event_.removePollFd(sock_);
-  event_.addPollFd(sock_, POLLIN, [=, this]() {
+  event_.addPollFd(sock_, POLLIN, [=, this](auto) {
     event_.removePollFd(sock_);
     char buf[64];
     const auto rc = read(sock_, buf, sizeof(buf));
@@ -682,7 +682,7 @@ void Lutron::readLine() {
   });
 }
 
-void Lutron::pollIn(std::function<bool (void)> cb) {
+void Lutron::pollIn(std::function<bool (pollfd *)> cb) {
   // If we already have buffered data, we can invoke the callback directly.
   // Otherwise inform the event loop. No need evaluate the return code from
   // the callback. Our code always returns false, indicating that the event
@@ -690,7 +690,7 @@ void Lutron::pollIn(std::function<bool (void)> cb) {
   if (ahead_.empty() && sock_ >= 0) {
     event_.addPollFd(sock_, POLLIN, cb);
   } else {
-    cb();
+    cb(nullptr);
   }
 }
 

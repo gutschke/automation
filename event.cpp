@@ -32,6 +32,9 @@ Event::~Event() {
     delete pollFd;
   }
   delete[] fds_;
+  for (auto l : loop_) {
+    delete l;
+  }
 }
 
 void Event::loop() {
@@ -55,8 +58,22 @@ void Event::loop() {
         tmo -= now;
       }
     }
+
+    // Some users want to be invoked each time the loop iterates. This
+    // would give them the opportunity to adjust the next timeout value
+    // right before it normally fires.
+    if (loop_.size()) {
+      for (auto l : loop_) {
+        (*l)(tmo);
+      }
+      if (newTimeouts_) {
+        recomputeTimeoutsAndFds();
+        continue;
+      }
+    }
+
     // Wait for next event
-    struct timespec ts = { (long)tmo / 1000L, ((long)(tmo % 1000))*1000000L };
+    timespec ts = { (long)tmo / 1000L, ((long)(tmo % 1000))*1000000L };
     int nFds = pollFds_.size();
     int rc = ppoll(fds_, nFds, tmo ? &ts : nullptr, nullptr);
     if (!rc) {
@@ -67,7 +84,7 @@ void Event::loop() {
            rc > 0 && it != pollFds_.end(); it++, i++) {
         if (fds_[i].revents) {
           if (*it) {
-            if (!(*it)->cb()) {
+            if (!(*it)->cb(&fds_[i])) {
               removePollFd(*it);
             }
           }
@@ -75,7 +92,6 @@ void Event::loop() {
           rc--;
         }
       }
-      recomputeTimeoutsAndFds();
     }
     recomputeTimeoutsAndFds();
   }
@@ -85,7 +101,7 @@ void Event::exitLoop() {
   done_ = true;
 }
 
-void *Event::addPollFd(int fd, short events, std::function<bool (void)> cb) {
+void *Event::addPollFd(int fd, short events, std::function<bool (pollfd*)> cb) {
   if (!newFds_) {
     newFds_ = new std::vector<PollFd *>(pollFds_);
   }
@@ -229,10 +245,21 @@ void Event::runLater(std::function<void(void)> cb) {
   later_.push_back(cb);
 }
 
+void *Event::addLoop(std::function<void (unsigned)> cb) {
+  loop_.push_back(new std::function<void (unsigned)>{cb});
+  return loop_.back();
+}
+
+void Event::removeLoop(void *handle) {
+  auto cb = (std::function<void (unsigned)> *)handle;
+  loop_.erase(std::remove(loop_.begin(), loop_.end(), cb));
+  delete cb;
+}
+
 void Event::recomputeTimeoutsAndFds() {
   if (newFds_) {
     delete[] fds_;
-    fds_ = new struct ::pollfd[newFds_->size()];
+    fds_ = new pollfd[newFds_->size()];
     int i = 0;
     for (auto it = newFds_->begin(); it != newFds_->end(); it++, i++) {
       fds_[i].fd = (*it)->fd;

@@ -1,9 +1,9 @@
 # CXX    := clang++-6.0
 CXX      := g++
 CFLAGS   := --std=gnu++2a -g -Wall -D_DEFAULT_SOURCE -fno-rtti -fno-exceptions \
-            -Wno-psabi
+            -Wno-psabi -I libwebsockets/include
 LFLAGS   := -Wall
-LIBS     := -lfmt -lpugixml
+LIBS     := -lfmt -lpugixml libwebsockets/lib/libwebsockets.a -lcap
 
 all: automation
 SRCS     := $(shell echo *.cpp)

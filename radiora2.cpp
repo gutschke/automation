@@ -299,7 +299,7 @@ void RadioRA2::getSchema(const sockaddr& addr, socklen_t len,
   }
   // We let the event loop drive the operation. First, we wait for the
   // connection to be established.
-  const auto readSchema = [cb, this]() {
+  const auto readSchema = [cb, this](pollfd *) {
     event_.removePollFd(schemaSock_);
     socklen_t addrlen = 0;
     if (getpeername(schemaSock_, (struct sockaddr *)"", &addrlen) < 0) {
@@ -322,7 +322,7 @@ void RadioRA2::getSchema(const sockaddr& addr, socklen_t len,
     }
     // All data is read asynchronously from the event loop.
     event_.addPollFd(schemaSock_, POLLIN,
-      [this, cb, schema = std::string()]() mutable {
+      [this, cb, schema = std::string()](auto) mutable {
       char buf[1100];
       for (;;) {
         const auto rc = read(schemaSock_, buf, sizeof(buf));
@@ -397,7 +397,7 @@ void RadioRA2::getSchema(const sockaddr& addr, socklen_t len,
   if (connect(schemaSock_, &addr, len) >= 0) {
     // connect() usually returns asynchronously, as we configured the socket
     // to be non-blocking. But if it returns synchronously, that's OK too.
-    readSchema();
+    readSchema(nullptr);
   } else {
     if (errno == EINPROGRESS || errno == EWOULDBLOCK) {
       event_.addPollFd(schemaSock_, POLLOUT, readSchema);

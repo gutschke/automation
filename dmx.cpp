@@ -36,7 +36,7 @@ DMX::DMX(Event& event, const std::string& dev)
       if (bind(fd, (const struct sockaddr *)&srv, sizeof(srv)) < 0) {
         close(fd);
       } else {
-        event_.addPollFd(fd, POLLIN, [=, this]() {
+        event_.addPollFd(fd, POLLIN, [=, this](auto) {
           static int c = 0; if (write(1, &"-\\|/"[++c%4], 1)+write(1,"\010",1));
           unsigned char buf[513];
           auto n = recv(fd, buf, sizeof(buf), MSG_DONTWAIT);

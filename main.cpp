@@ -16,6 +16,7 @@ using json = nlohmann::json;
 #include "radiora2.h"
 #include "relay.h"
 #include "util.h"
+#include "ws.h"
 
 
 // Monitor the health of our process by sending regular heart beats. If the
@@ -203,6 +204,7 @@ static void server() {
   // Create all the different objects that make up our server and connect
   // them to each other. Then enter the event loop.
   Event event;
+  WS ws(&event, 8080);
   dmxRemoteServer(event);
   DBG("Starting...");
   DMX dmx(event);

@@ -73,4 +73,5 @@ json.hpp
 .build
 automation
 site.json
+libwebsockets
 *.ra2

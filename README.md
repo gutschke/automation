@@ -10,6 +10,7 @@ pins, as found on a Raspberry Pi.
 * https://github.com/fmtlib/fmt
 * https://github.com/nlohmann/json
 * https://github.com/zeux/pugixml
+* https://github.com/warmcat/libwebsockets
 
 ## Configuration
 
