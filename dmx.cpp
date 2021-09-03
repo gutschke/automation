@@ -18,7 +18,8 @@ static const char *dmxsrv;
 
 
 DMX::DMX(Event& event, const std::string& dev)
-  : event_(event), dev_(dev), fd_(-1), adj_(0), fadeTime_(1), refreshTmo_(0) {
+  : event_(event), dev_(dev.empty() ? "/dev/ttyUSB0" : dev), fd_(-1),
+    adj_(0), fadeTime_(1), refreshTmo_(0) {
 #if !defined(NDEBUG)
   // It is easier to develop on a more powerful device. Setting the
   // DMXSERVER environment variable to an empty string enables a server that

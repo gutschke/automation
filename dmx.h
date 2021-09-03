@@ -8,7 +8,7 @@
 
 class DMX {
  public:
-  DMX(Event& event, const std::string& dev = "/dev/ttyUSB0");
+  DMX(Event& event, const std::string& dev = "");
   ~DMX();
   void set(int idx, int val);
 

@@ -20,7 +20,8 @@ Lutron::Lutron(Event& event,
                const std::string& username,
                const std::string& passwd)
   : timeout_(event), event_(event), input_(input), init_(init), closed_(closed),
-    gateway_(gateway), username_(username), passwd_(passwd),
+    gateway_(gateway), username_(username.empty() ? "lutron" : username),
+    passwd_(passwd.empty() ? "integration" : passwd),
     sock_(-1), dontfinalize_(false), isConnected_(false), inCommand_(false),
     inCallback_(false), atPrompt_(false), keepAlive_(0) {
   DBG("Lutron(\"" << gateway << "\", \"" << username <<"\", \""<<passwd<<"\")");

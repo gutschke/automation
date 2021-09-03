@@ -18,8 +18,8 @@ class Lutron {
          std::function<void (std::function<void ()> cb)> init=[](auto x){x();},
          std::function<void (void)> closed = nullptr,
          const std::string& gateway = "",
-         const std::string& username = "lutron",
-         const std::string& passwd = "integration");
+         const std::string& username = "",
+         const std::string& passwd = "");
   ~Lutron();
   void command(const std::string& cmd,
                std::function<void (const std::string& res)> cb = [](auto){},

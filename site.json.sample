@@ -9,6 +9,13 @@
 // file is still needed. Lutron just doesn't allow to use sufficiently long
 // strings to encode all the information that we would like to attach.
 {
+  // If you changed the default password for your Lutron system or if you
+  // are using a non-standard port for the DMX bus, you can override these
+  // settings here.
+  // "USER": "lutron",
+  // "PASSWORD": "integration",
+  // "DMX SERIAL": "/dev/ttyUSB0",
+
   "GPIO": {
     // Symbolic names for GPIO inputs and outputs. Inputs can be inverted
     // by prepending "!".

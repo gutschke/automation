@@ -30,7 +30,10 @@ class RadioRA2 {
            std::function<void (const std::string& line,
                                const std::string& context)> input = nullptr,
            std::function<void ()> hb = nullptr,
-           std::function<void ()> schemaInvalid = nullptr);
+           std::function<void ()> schemaInvalid = nullptr,
+           const std::string& gateway = "",
+           const std::string& username = "",
+           const std::string& password = "");
   ~RadioRA2();
   int addOutput(const std::string name, std::function<void (int)> cb);
   void addToButton(int kp, int bt, int id, int level, bool makeToggle = false);

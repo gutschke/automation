@@ -16,6 +16,7 @@ using json = nlohmann::json;
 #include "radiora2.h"
 #include "relay.h"
 #include "util.h"
+#include "ws.h"
 
 
 // Monitor the health of our process by sending regular heart beats. If the
@@ -129,143 +130,138 @@ static void readLine(RadioRA2& ra2, DMX& dmx, Relay& relay,
   }
 }
 
-static void readConfig(const std::string& fname,
-                       RadioRA2& ra2, DMX& dmx, Relay& relay) {
+static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
+                          Relay& relay) {
   // Out of the box, our code does not implement any policy and won't really
   // change the behavior of the Lutron device. But given a "site.json"
   // configuration file, it can integrate non-Lutron devices into the
   // existing RadioRA2 system.
-  std::ifstream ifs(fname);
-  if ((ifs.rdstate() & std::ifstream::failbit) != 0) {
-    DBG("Failed to read \"" << fname << "\"");
-  } else {
-    json site = json::parse(ifs, nullptr, false, true);
-    if (site.is_discarded()) {
-      DBG("Failed to parse \"" << fname << "\"");
-    } else {
-      // Iterate over all "DMX" object definitions and add virtual outputs
-      // for DMX fixtures that are represented by dummy objects in the
-      // Lutron system.
-      const auto& dmxIds = site["DMX"];
-      for (const auto& [name, params] : dmxIds.items()) {
-        if (params.size() <= 0 || !params[0].is_number()) {
-          continue;
-        }
-        ra2.addOutput(
-          fmt::format("{}{}", RadioRA2::DMXALIAS, params[0].get<int>()),
-          [&dmx, params](int level) {
-            setDMX(dmx, params, level);
-          });
+
+  // Iterate over all "DMX" object definitions and add virtual outputs
+  // for DMX fixtures that are represented by dummy objects in the
+  // Lutron system.
+  if (site.contains("DMX")) {
+    const auto& dmxIds = site["DMX"];
+    for (const auto& [name, params] : dmxIds.items()) {
+      if (params.size() <= 0 || !params[0].is_number()) {
+        continue;
       }
-      // Iterate over all "KEYPAD" object definitions and add new assignments
-      // to the various keypad buttons.
-      const auto& keypad = site["KEYPAD"];
-      for (const auto& [kp, buttons] : keypad.items()) {
-        for (const auto& [bt, actions] : buttons.items()) {
-          for (const auto& [at, rule] : actions.items()) {
-            if (at == "DMX") {
-              // Register DMX light fixtures with the "RadioRA2" object.
-              // This is the most fundamental feature that we implement. It
-              // makes DMX light fixtures behave just the same as native
-              // Lutron output devices.
-              for (const auto& [output, level] : rule.items()) {
-                const auto& dmxIds = site["DMX"];
-                const auto& params = dmxIds.find(output);
-                if (params == dmxIds.end()) {
-                  DBG("Cannot find DMX fixture \"" << output << "\"");
-                  continue;
-                }
-                ra2.addToButton(
-                  atoi(kp.c_str()), atoi(bt.c_str()),
-                  ra2.addOutput(output,
-                    [&, dimmer = *params](int level) {
-                      setDMX(dmx, dimmer, level);
-                    }),
-                  level.get<int>());
+      ra2.addOutput(
+        fmt::format("{}{}", RadioRA2::DMXALIAS, params[0].get<int>()),
+        [&dmx, params](int level) {
+          setDMX(dmx, params, level);
+        });
+    }
+  }
+  // Iterate over all "KEYPAD" object definitions and add new assignments
+  // to the various keypad buttons.
+  if (site.contains("KEYPAD")) {
+    const auto& keypad = site["KEYPAD"];
+    for (const auto& [kp, buttons] : keypad.items()) {
+      for (const auto& [bt, actions] : buttons.items()) {
+        for (const auto& [at, rule] : actions.items()) {
+          if (at == "DMX" && site.contains("DMX")) {
+            // Register DMX light fixtures with the "RadioRA2" object.
+            // This is the most fundamental feature that we implement. It
+            // makes DMX light fixtures behave just the same as native
+            // Lutron output devices.
+            for (const auto& [output, level] : rule.items()) {
+              const auto& dmxIds = site["DMX"];
+              const auto& params = dmxIds.find(output);
+              if (params == dmxIds.end()) {
+                DBG("Cannot find DMX fixture \"" << output << "\"");
+                continue;
               }
-            } else if (at == "TOGGLE") {
-              // Some devices (e.g. Pico remote) have artificial constraints,
-              // forcing a button to enable a scene instead of allowing it to
-              // be a toggle button. For these buttons, we don't assign any
-              // fixtures in the Lutron controller and instead implement the
-              // toggle function ourselves. This works by aliasing the physical
-              // output device to a virtual copy that can be attached to a
-              // callback.
-              for (const auto& out : rule) {
-                ra2.addToButton(
-                  atoi(kp.c_str()), atoi(bt.c_str()),
-                  ra2.addOutput(
-                    fmt::format("{}{}", RadioRA2::ALIAS, out.get<int>()),
-                    [&, out](int level) {
-                      ra2.command(fmt::format(
-                        "#OUTPUT,{},1,{}.{:02}",
-                        out.get<int>(), level/100, level%100));
-                    }), 100, true);
-              }
-            } else if (at == "DEVICE") {
-              // An alternative way to achieve a similar goal is for the
-              // Pico remote to simulate a button press on a different keypad.
-              const int otherKp = rule[0].get<int>();
-              const int otherBt = rule[1].get<int>();
               ra2.addToButton(
                 atoi(kp.c_str()), atoi(bt.c_str()),
-                ra2.addOutput(fmt::format("DEV:{}/{}", otherKp, otherBt),
-                  [&, otherKp, otherBt](auto) {
-                    ra2.command(fmt::format("#DEVICE,{},{},3",otherKp,otherBt));
-                    ra2.command(fmt::format("#DEVICE,{},{},4",otherKp,otherBt));
-                  }), 0);
-            } else if (at == "RELAY") {
-              // We can control GPIO inputs and outputs that frequently have
-              // relays attached. Currently, only momentary push buttons are
-              // implemented for output pins. But that could be extended as
-              // needed.
-              // A GPIO rule is a two-element vector that specifies a
-              // prerequisite condition (i.e. a GPIO input), and an action to
-              // take (i.e. a GPIO output). The condition can be omitted by
-              // using an empty string. And it can be inverted by either
-              // preceding the GPIO definition or the rule definition with a
-              // "!".
-              auto cond = rule[0].get<std::string>();
-              const auto& action = rule[1].get<std::string>();
-              bool sense = !(cond.size() > 0 && cond[0] == '!');
-              if (!sense) {
-                // Invert the sense of the GPIO input for this rule only.
-                cond.erase(0, 1);
-              }
-              const auto& gpio = site["GPIO"];
-              int condPin = -1;
-              if (!cond.empty()) {
-                // Globally invert the sense of this GPIO pin. This becomes
-                // more complicated, as the JSON implementation doesn't fully
-                // behave like STL containers, so we can't use std::find_if().
-                for (auto& [k,v] : gpio.items()) {
-                  if (k.rfind(cond, k[0] == '!') <= 1) {
-                    condPin = v; sense ^= k[0] == '!'; break;
-                  }
+                ra2.addOutput(output,
+                  [&, dimmer = *params](int level) {
+                    setDMX(dmx, dimmer, level);
+                  }),
+                level.get<int>());
+            }
+          } else if (at == "TOGGLE") {
+            // Some devices (e.g. Pico remote) have artificial constraints,
+            // forcing a button to enable a scene instead of allowing it to
+            // be a toggle button. For these buttons, we don't assign any
+            // fixtures in the Lutron controller and instead implement the
+            // toggle function ourselves. This works by aliasing the physical
+            // output device to a virtual copy that can be attached to a
+            // callback.
+            for (const auto& out : rule) {
+              ra2.addToButton(
+                atoi(kp.c_str()), atoi(bt.c_str()),
+                ra2.addOutput(
+                  fmt::format("{}{}", RadioRA2::ALIAS, out.get<int>()),
+                  [&, out](int level) {
+                    ra2.command(fmt::format(
+                      "#OUTPUT,{},1,{}.{:02}",
+                      out.get<int>(), level/100, level%100));
+                  }), 100, true);
+            }
+          } else if (at == "DEVICE") {
+            // An alternative way to achieve a similar goal is for the
+            // Pico remote to simulate a button press on a different keypad.
+            const int otherKp = rule[0].get<int>();
+            const int otherBt = rule[1].get<int>();
+            ra2.addToButton(
+              atoi(kp.c_str()), atoi(bt.c_str()),
+              ra2.addOutput(fmt::format("DEV:{}/{}", otherKp, otherBt),
+                [&, otherKp, otherBt](auto) {
+                  ra2.command(fmt::format("#DEVICE,{},{},3",otherKp,otherBt));
+                  ra2.command(fmt::format("#DEVICE,{},{},4",otherKp,otherBt));
+                }), 0);
+          } else if (at == "RELAY" && site.contains("GPIO")) {
+            // We can control GPIO inputs and outputs that frequently have
+            // relays attached. Currently, only momentary push buttons are
+            // implemented for output pins. But that could be extended as
+            // needed.
+            // A GPIO rule is a two-element vector that specifies a
+            // prerequisite condition (i.e. a GPIO input), and an action to
+            // take (i.e. a GPIO output). The condition can be omitted by
+            // using an empty string. And it can be inverted by either
+            // preceding the GPIO definition or the rule definition with a
+            // "!".
+            auto cond = rule[0].get<std::string>();
+            const auto& action = rule[1].get<std::string>();
+            bool sense = !(cond.size() > 0 && cond[0] == '!');
+            if (!sense) {
+              // Invert the sense of the GPIO input for this rule only.
+              cond.erase(0, 1);
+            }
+            const auto& gpio = site["GPIO"];
+            int condPin = -1;
+            if (!cond.empty()) {
+              // Globally invert the sense of this GPIO pin. This becomes
+              // more complicated, as the JSON implementation doesn't fully
+              // behave like STL containers, so we can't use std::find_if().
+              for (auto& [k,v] : gpio.items()) {
+                if (k.rfind(cond, k[0] == '!') <= 1) {
+                  condPin = v; sense ^= k[0] == '!'; break;
                 }
               }
-              // Also look up the output pin that should be toggled.
-              const auto actionPin = gpio.find(action);
-              // If we were able to successfully parse the GPIO rule, set up
-              // a callback function that will be invoked any time the user
-              // pushes a button on the keypad.
-              if ((cond.empty() || condPin >= 0) && actionPin != gpio.end()) {
-                ra2.addToButton(
-                  atoi(kp.c_str()), atoi(bt.c_str()),
-                  ra2.addOutput(fmt::format("RELAY:{}/{}",
-                    condPin, actionPin->get<int>()),
-                    [&, sense, condPin,
-                     actionPin = actionPin->get<int>()](auto) {
-                      if (condPin < 0 || relay.get(condPin) == sense) {
-                        relay.toggle(actionPin);
-                      }
-                    }), 0);
-              } else {
-                DBG("Cannot parse GPIO rule");
-              }
-            } else {
-              DBG("Unknown event type: " << at);
             }
+            // Also look up the output pin that should be toggled.
+            const auto actionPin = gpio.find(action);
+            // If we were able to successfully parse the GPIO rule, set up
+            // a callback function that will be invoked any time the user
+            // pushes a button on the keypad.
+            if ((cond.empty() || condPin >= 0) && actionPin != gpio.end()) {
+              ra2.addToButton(
+                atoi(kp.c_str()), atoi(bt.c_str()),
+                ra2.addOutput(fmt::format("RELAY:{}/{}",
+                  condPin, actionPin->get<int>()),
+                  [&, sense, condPin,
+                   actionPin = actionPin->get<int>()](auto) {
+                    if (condPin < 0 || relay.get(condPin) == sense) {
+                      relay.toggle(actionPin);
+                    }
+                  }), 0);
+            } else {
+              DBG("Cannot parse GPIO rule");
+            }
+          } else {
+            DBG("Unknown event type: " << at);
           }
         }
       }
@@ -288,24 +284,48 @@ static void dmxRemoteServer(Event& event) {
 }
 
 static void server() {
+  // Read the "site.json" file, if present. Some of the data will be needed
+  // early to initialize global state. Other data will be used at a later point
+  // to augment the information that we retrieve from the Lutron controller.
+  json site("{}"_json);
+  const std::string& fname = "site.json";
+  std::ifstream ifs(fname);
+  if ((ifs.rdstate() & std::ifstream::failbit) != 0) {
+    DBG("Failed to read \"" << fname << "\"");
+  } else {
+    json cfg = json::parse(ifs, nullptr, false, true);
+    if (cfg.is_discarded()) {
+      DBG("Failed to parse \"" << fname << "\"");
+    } else {
+      site = std::move(cfg);
+    }
+  }
+
   // Create all the different objects that make up our server and connect
   // them to each other. Then enter the event loop.
   Event event;
+  WS ws(&event, 8080);
   dmxRemoteServer(event);
   DBG("Starting...");
-  DMX dmx(event);
+  DMX dmx(
+    event,
+    site.contains("DMX SERIAL") ? site["DMX SERIAL"].get<std::string>() : "");
   Relay relay(event);
-  RadioRA2 ra2(event,
-               [&]() { readConfig("site.json", ra2, dmx, relay); },
-               [&](const std::string& line, const std::string& context) {
-                 readLine(ra2, dmx, relay, line, context); },
-               // Communicate with parent process. This allows the watchdog
-               // to kill us, if we become unresponsive. And it also allows
-               // us to request a restart, if the automation schema changed
-               // unexpectedly.
-               [](){ if (childFd[1] >= 0 && write(childFd[1], "", 1));},
-               [](){ if (childFd[1] < 0 || !write(childFd[1], "\1", 1)) {
-                    DBG("Stale cached data"); _exit(1);}});
+  RadioRA2 ra2(
+    event,
+    [&]() { augmentConfig(site, ra2, dmx, relay); },
+    [&](const std::string& line, const std::string& context) {
+      readLine(ra2, dmx, relay, line, context); },
+    // Communicate with parent process. This allows the watchdog
+    // to kill us, if we become unresponsive. And it also allows
+    // us to request a restart, if the automation schema changed
+    // unexpectedly.
+    [](){ if (childFd[1] >= 0 && write(childFd[1], "", 1));},
+    [](){ if (childFd[1] < 0 || !write(childFd[1], "\1", 1)) {
+            DBG("Stale cached data"); _exit(1);}},
+    "",
+    site.contains("USER") ? site["USER"].get<std::string>() : "",
+    site.contains("PASSWORD") ? site["PASSWORD"].get<std::string>() : "");
   event.loop();
 }
 
