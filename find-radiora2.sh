@@ -26,7 +26,7 @@ validate() {
   }
 }
 { validate "$(<${cache})"; } 2>/dev/null
-yes n | rm -i "${cache}" >&/dev/null
+{ yes n | rm -i "${cache}"; } >&/dev/null
 
 ip="$(ip route show to default 0.0.0.0/0 2>/dev/null |
       sed 's/.*src \([^ ]*\).*/\1/;t1;d;:1;q')"
