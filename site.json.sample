@@ -29,19 +29,20 @@
     // Define DMX dimmers.
     // If the first optional entry is an integer, it is the integration id
     // of a Lutron dimmer that should be mapped to this DMX fixture; this
-    // dimmer can be a dummy device that doesn't physically exist.
-    // After that, the first vector contains the DMX id(s) of the dimmer(s).
-    // The second vector, if any, contains the exponent for the dimmer curve.
+    // dimmer would normally be a dummy device that doesn't physically exist.
+    // After this optional entry, a first vector contains the DMX id(s) of the
+    // DMX dimmer(s). The second vector, if any, contains the exponent for the
+    // dimmer curve.
     // Use 1.0 for a fixture that implements the dimmer curve internally; use
     // a value between 1.0 and 2.5 to enforce a logarithmic brightness
-    // relationship. The third number, if any, is the low trim value.
+    // relationship. The third number, if any, is the low trim value in percent.
     "LIVINGROOM": [ [1, 2], [ 2.1, 1.1 ] ],
     "BEDROOM":    [ [3], [ 1.1 ], 1 ],
     "DEN":        [ 11, [4] ]
     // This configuration section can optionally be defined in-line in the
-    // Lutron software itself. Doing so can sometimes make the "site.json" file
+    // Lutron software itself. Doing so can often make the "site.json" file
     // unnecessary. If you want to do this, append the contents of the JSON
-    // array to the "Zone Name" of the dummy output. For instance:
+    // array to the "Zone Name" of the dummy output device. For instance:
     // "Living Room: [1, 2], [ 2.1, 1.1 ]"
     // "Bed Room: [3], [ 1.1 ], 1"
     // "Den: [4]"
@@ -61,7 +62,12 @@
               // "Fan:!21,22"
               "RELAY": [ "!DOORISOPEN", "ACTIVATEFAN" ],
               // "DMX" defines a scene with predefined output levels in
-              // the range 0 .. 100.
+              // the range 0 .. 100. This is an alternative way of integrating
+              // DMX fixtures and doesn't rely on "dummy" devices in the
+              // Lutron configuration. If you are running low on available
+              // integration ids for your Lutron system, that might be the
+              // only option for you. For all other users, dummy devices are
+              // probably easier to use.
               "DMX": { "LIVINGROOM": 100, // Set one DMX dimmer to 100%.
                        "BEDROOM":     30  // And the other one to 30%.
                        // The Lutron software determines whether this button
