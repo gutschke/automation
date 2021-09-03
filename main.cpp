@@ -16,7 +16,6 @@ using json = nlohmann::json;
 #include "radiora2.h"
 #include "relay.h"
 #include "util.h"
-#include "ws.h"
 
 
 // Monitor the health of our process by sending regular heart beats. If the
@@ -39,6 +38,94 @@ static void setDMX(DMX& dmx, const json& dimmer, int level) {
     double t = trim.is_number() ? trim.get<double>() : 0;
     int v = pow((level*(100.0-t)/100.0+t)/10000, exp)*255;
     dmx.set(id, v);
+  }
+}
+
+static void readLine(RadioRA2& ra2, DMX& dmx, Relay& relay,
+                     const std::string& line, const std::string& context) {
+  DBG("readLine(\"" << line << "\", \"" << context << "\")");
+  if (Util::starts_with(line, "~OUTPUT,")) {
+    // When an output device changes levels, we expect a line of the form
+    // "~OUTPUT,<dev>,1,<level>". If this was a dummy device that stands in for
+    // a DMX load, the user can specify the DMX info in the device name.
+    // This makes the "site.json" file unnecessary and allows the user to
+    // design their entire system inside of the Lutron software.
+    // The additional information needed is provided to us in the "context".
+    // A ":" after the device name includes the JSON string that we
+    // subsequently need to pass to setDMX().
+    auto comma = strchr(&line[8], ',');
+    if (!memcmp(",1,", comma, 3)) {
+      // Check whether the "context" references a DMX load.
+      auto args = context.find(':');
+      if (args != std::string::npos && context[++args] == '[') {
+        // Lutron outputs the level as a number in the range 0..100 with two
+        // decimals precision. Convert it to an integer in the range 0..10000.
+        int level = 100*atoi(comma + 3);
+        auto decimal = strchr(comma + 3, '.');
+        if (decimal && decimal[1] >= '0' && decimal[1] <= '9') {
+          level += 10*(decimal[1] - '0');
+          if (decimal[2] >= '0' && decimal[2] <= '9') {
+            level += decimal[2] - '0';
+          }
+        }
+        DBG("Found in-line DMX info");
+        setDMX(dmx, json::parse("[" + context.substr(args) + "]"),
+               std::min(std::max(0, level), 10000));
+      }
+    }
+  } else if (Util::starts_with(line, "~DEVICE,") &&
+             Util::ends_with(line, ",3")) {
+    const auto dev = atoi(&line[8]);
+    // Pico remotes aren't output devices, but we can track their buttons and
+    // make them behave like virtual key events for a keypad. Again, this
+    // information can be encoded using the Pico label.
+    // Button presses will be reported with a line of the form
+    // "~DEVICE,<pico>,<button>,3".
+    // We also look at keypads, and interpret any in-line information as
+    // instructions when to toggle relay outputs.
+    auto args = context.find(':');
+    if (args != std::string::npos) {
+      switch (ra2.deviceType(dev)) {
+      case RadioRA2::DEV_PICO_KEYPAD: {
+        auto json = json::parse("[" + context.substr(args + 1) + "]");
+        switch (json.size()) {
+        case 1: // This button controls an output and behaves like "TOGGLE"
+                // directive in a "site.json" file.
+          ra2.toggleOutput(json[0].get<int>());
+          break;
+        case 2:{// This button forwards the button press to a different keypad,
+                // and behaves like the "DEVICE" directive in a "site.json" file.
+          const int otherKp = json[0].get<int>();
+          const int otherBt = json[1].get<int>();
+          ra2.command(fmt::format("#DEVICE,{},{},3", otherKp, otherBt));
+          ra2.command(fmt::format("#DEVICE,{},{},4", otherKp, otherBt));
+          break; }
+        default:
+          break;
+        }
+        break; }
+      case RadioRA2::DEV_SEETOUCH_KEYPAD:
+      case RadioRA2::DEV_HYBRID_SEETOUCH_KEYPAD: {
+        std::string cond = Util::trim(context.substr(args + 1));
+        const bool sense = !(cond.size() > 0 && cond[0] == '!');
+        if (!sense) {
+          cond.erase(0, 1);
+        }
+        auto comma = cond.find(',');
+        int condPin = -1;
+        if (comma != std::string::npos) {
+          condPin = atoi(cond.c_str());
+          cond = Util::trim(cond.substr(comma + 1));
+        }
+        int actionPin = atoi(cond.c_str());
+        if (condPin < 0 || relay.get(condPin) == sense) {
+          relay.toggle(actionPin);
+        }
+        break; }
+      default:
+        break;
+      }
+    }
   }
 }
 
@@ -204,14 +291,14 @@ static void server() {
   // Create all the different objects that make up our server and connect
   // them to each other. Then enter the event loop.
   Event event;
-  WS ws(&event, 8080);
   dmxRemoteServer(event);
   DBG("Starting...");
   DMX dmx(event);
   Relay relay(event);
   RadioRA2 ra2(event,
                [&]() { readConfig("site.json", ra2, dmx, relay); },
-               nullptr,
+               [&](const std::string& line, const std::string& context) {
+                 readLine(ra2, dmx, relay, line, context); },
                // Communicate with parent process. This allows the watchdog
                // to kill us, if we become unresponsive. And it also allows
                // us to request a restart, if the automation schema changed

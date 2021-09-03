@@ -15,7 +15,8 @@
 
 RadioRA2::RadioRA2(Event& event,
                    std::function<void ()> init,
-                   std::function<void (const std::string& line)> input,
+                   std::function<void (const std::string& line,
+                                       const std::string& context)> input,
                    std::function<void ()> hb,
                    std::function<void ()> schemaInvalid)
   : event_(event),
@@ -95,9 +96,10 @@ void RadioRA2::readLine(const std::string& line) {
     return;
   }
   DBG("Read line: \"" << line << "\"");
+  std::string context;
   // Received an update about a device. We are primarily interested in LEDs
   // and in light fixtures.
-  if (!line.rfind("~DEVICE,", 0)) {
+  if (Util::starts_with(line, "~DEVICE,")) {
     // We find out about LEDs with a line of the form
     //
     //   ~DEVICE,${IntegrationID},${ComponentNumber},9,${State}
@@ -115,19 +117,20 @@ void RadioRA2::readLine(const std::string& line) {
     const auto& dev = devices_.find((int)strtol(line.c_str() + 8, &endPtr, 10));
     if (dev != devices_.end() && *endPtr++ == ',') {
       int l = (int)strtol(endPtr, &endPtr, 10);
-      if (dev->second.components.find(l) != dev->second.components.end()) {
+      auto& keypad = dev->second;
+      if (keypad.components.find(l) != keypad.components.end()) {
         // This is a button and not an LED
         if (!strcmp(endPtr, ",3") || !strcmp(endPtr, ",4")) {
-          auto& keypad = dev->second;
           auto& button = keypad.components[l];
           buttonPressed(keypad, button, endPtr[1] == '4');
+          context = button.name;
         }
       } else {
         // Find LED that matches the ${ComponentNumber}. This is complicated
         // by the fact that in our internal data structures, we always match up
         // LEDs with their associated button.
-        const auto& led = std::find_if(dev->second.components.begin(),
-                                       dev->second.components.end(),
+        const auto& led = std::find_if(keypad.components.begin(),
+                                       keypad.components.end(),
                                        [&](auto& t) -> bool {
                                          return t.second.led == l;
                                        });
@@ -135,16 +138,17 @@ void RadioRA2::readLine(const std::string& line) {
         // internal copy. If we only received "255", assume that the LED is
         // probably off. And that's the default state that the object's
         // constructor left it in. So, nothing to do here.
-        if (led != dev->second.components.end() && *endPtr++ == ',' &&
-            *endPtr++ == (ACTION_LEDSTATE + '0') &&
-            *endPtr++ == ',' && (*endPtr == '0' || *endPtr == '1') &&
-            !endPtr[1]) {
-          led->second.ledState = *endPtr == '1';
+        if (led != keypad.components.end() && *endPtr++ == ',' &&
+            *endPtr++ == (ACTION_LEDSTATE + '0') && *endPtr++ == ',') {
+          context = led->second.name;
           led->second.uncertain = (*endPtr != '0' && *endPtr != '1')||endPtr[1];
+          if (!led->second.uncertain) {
+            led->second.ledState = *endPtr == '1';
+          }
         }
       }
     }
-  } else if (!line.rfind("~OUTPUT,", 0)) {
+  } else if (Util::starts_with(line, "~OUTPUT,")) {
     // We find out about light fixtures with a line of the form
     //
     //   ~OUTPUT,${IntegrationID},1,${DimmerLevel}
@@ -153,10 +157,12 @@ void RadioRA2::readLine(const std::string& line) {
     // Find keypad that matches the ${IntegrationID}.
     int id = (int)strtol(line.c_str() + 8, &endPtr, 10);
     const auto& out = outputs_.find(id);
-    if (out != outputs_.end() && *endPtr++ == ',' &&
-        *endPtr++ == '1' && *endPtr++ == ',') {
+    if (out != outputs_.end() &&
+        *endPtr++ == ',' && *endPtr++ == '1' && *endPtr++ == ',') {
       // Update our internal state.
       out->second.level = strToLevel(endPtr);
+      context = out->second.name;
+
       // Check if there is any aliased output. This allows us to take over
       // the implementation of an output that is *also* natively handled by
       // the Lutron controller.
@@ -181,7 +187,7 @@ void RadioRA2::readLine(const std::string& line) {
     });
   }
   if (input_) {
-    input_(line);
+    input_(line, Util::trim(context));
   }
 }
 
@@ -359,7 +365,7 @@ void RadioRA2::getSchema(const sockaddr& addr, socklen_t len,
             // that makes it hard to  manipulate. Extract only what we need
             // and populate our internal data structures.
             if (extractSchemaInfo(xml)) {
-              DBG("Cached schema is invalid");
+              DBG("Cached schema is invalid; updating cache with new data");
               // While we could save the raw data returned from the device,
               // we instead pretty-print it. That can help when debugging a
               // site's configuration.
@@ -681,6 +687,17 @@ void RadioRA2::addToButton(int kp, int bt, int id, int level, bool makeToggle) {
     }
   }
   devices_[kp].components[bt].assignments.push_back(Assignment(id, level*100));
+}
+
+void RadioRA2::toggleOutput(int out) {
+//DBG("RadioRA2::toggleOutput(" << out << ")");
+  auto output = outputs_.find(out);
+  if (output != outputs_.end()) {
+    auto& level = output->second.level;
+    level = level ? 0 : 10000;
+    command(fmt::format("#OUTPUT,{},1,{}.{:02}",
+                        out, level/100, level%100));
+  }
 }
 
 void RadioRA2::buttonPressed(Device& keypad, Component& button,

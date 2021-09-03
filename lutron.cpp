@@ -550,7 +550,7 @@ void Lutron::processLine(const std::string& line) {
     // If we are still in the process of executing a query command, but now
     // saw a prompt command instead, assume that there won't be a result code.
     if (inCommand_ && pending_[inCallback_].size() &&
-        std::get<0>(*pending_[inCallback_].begin()).rfind("?", 0)) {
+        !Util::starts_with(std::get<0>(*pending_[inCallback_].begin()), "?")) {
       const auto cmd = *pending_[inCallback_].begin();
       pending_[inCallback_].erase(pending_[inCallback_].begin());
       event_.runLater([=, cb = std::get<1>(cmd)]() { cb(""); });
@@ -565,7 +565,7 @@ void Lutron::processLine(const std::string& line) {
     const auto cb = std::get<1>(*pending_[inCallback_].rbegin());
     pending_[inCallback_].pop_back();
     event_.runLater([=]() { cb(line); });
-  } else if (!line.rfind("~ERROR", 0) ||
+  } else if (Util::starts_with(line, "~ERROR") ||
              line == "is an unknown command") {
     if (!inCallback_) {
       timeout_.clear();
@@ -579,15 +579,15 @@ void Lutron::processLine(const std::string& line) {
       DBG("Found error message; command \"" << std::get<0>(cmd) << "\"");
       onPrompt_.push_back(std::get<2>(cmd));
     }
-  } else if (!line.rfind("~", 0)) {
+  } else if (Util::starts_with(line, "~")) {
     // Command starting with "~" character signal a status change. This could
     // be the response to a query "?" command, or it could be an unsolicted
     // update. We make a best effort to find the matching command, if there is
     // one.
     for (auto it = pending_[inCallback_].begin();
          it != pending_[inCallback_].end();) {
-      if (!line.rfind("~" +
-         std::get<0>(*it).substr(1, std::get<0>(*it).find_last_of(',')-1), 0)) {
+      if (Util::starts_with(line, "~" +
+         std::get<0>(*it).substr(1, std::get<0>(*it).find_last_of(',')-1))) {
         if (!inCallback_) {
           timeout_.clear();
         }

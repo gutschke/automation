@@ -1,3 +1,13 @@
+// The "site.json" file is the most powerful way to configure additional
+// functionality that should be integrated with the Lutron RadioRA2 system.
+// But for many common operations, we provide an alternative option to
+// enable the same feature by setting "magic" strings in the Lutron RadioRA2
+// software. In general, this happens by adding a ":" colon to the label
+// of a button or device and then following it with parameters that can be
+// interpreted as GPIO pin numbers, DMX devices, or Lutron integration ids.
+// Context decides what was meant. But sometimes that means a "site.json"
+// file is still needed. Lutron just doesn't allow to use sufficiently long
+// strings to encode all the information that we would like to attach.
 {
   "GPIO": {
     // Symbolic names for GPIO inputs and outputs. Inputs can be inverted
@@ -15,10 +25,19 @@
     // dimmer can be a dummy device that doesn't physically exist.
     // After that, the first vector contains the DMX id(s) of the dimmer(s).
     // The second vector, if any, contains the exponent for the dimmer curve.
-    // The third number, if any, is the low trim value.
+    // Use 1.0 for a fixture that implements the dimmer curve internally; use
+    // a value between 1.0 and 2.5 to enforce a logarithmic brightness
+    // relationship. The third number, if any, is the low trim value.
     "LIVINGROOM": [ [1, 2], [ 2.1, 1.1 ] ],
     "BEDROOM":    [ [3], [ 1.1 ], 1 ],
     "DEN":        [ 11, [4] ]
+    // This configuration section can optionally be defined in-line in the
+    // Lutron software itself. Doing so can sometimes make the "site.json" file
+    // unnecessary. If you want to do this, append the contents of the JSON
+    // array to the "Zone Name" of the dummy output. For instance:
+    // "Living Room: [1, 2], [ 2.1, 1.1 ]"
+    // "Bed Room: [3], [ 1.1 ], 1"
+    // "Den: [4]"
   },
   "KEYPAD": {
     "1": { // Hallway Keypad (use the Lutron integration id)
@@ -28,6 +47,11 @@
               // button listed in the second element of the vector.
               // It is ok to leave the condition an empty string. Negated
               // conditions start with a "!".
+              // This information can also be specified in the Lutron design
+              // software by including it in the label of a button. In that
+              // case, you cannot use symbolic names for the GPIO pins; as
+              // there simply isn't enough available space in that string.
+              // "Fan:!21,22"
               "RELAY": [ "!DOORISOPEN", "ACTIVATEFAN" ],
               // "DMX" defines a scene with predefined output levels in
               // the range 0 .. 100.
@@ -35,22 +59,33 @@
                        "BEDROOM":     30  // And the other one to 30%.
                        // The Lutron software determines whether this button
                        // acts as a toggle or whether it selects a scene.
-                       // We honor this setting and it doesn't need to be
+                       // We honor that setting and it doesn't need to be
                        // specified in the JSON file. Similarly, we refer to
-                       // the Lutron settings for determining LED policies.
+                       // the Lutron settings for determining LED policies
+                       // associated with that button on the keypad.
                      } },
        "5": { "RELAY": [ "COMPUTERISON", "RESTARTMODEM" ] },
        "6": { "RELAY": [ "", "PLAYJINGLE" ],
               "DMX": { "LIVINGROOM": 0,
                        "BEDROOM":    0 } } }
     "2": { // Mud Room Pico Remote (use Lutron integration id)
-           // For Pico Remotes, buttons are labelled "2" through "4".
+           // For Pico Remotes, buttons are labelled either "2" through "4", or
+           // "8" through "11" (depending on type of remote).
        "2": // Pico Remotes natively can only activate different scenes,
-            // but cannot toggle outputs. We can simulate that function even
-            // for Lutron devices.
-            // We can also simulate pressing the button on a different
-            // Lutron keypad. The latter makes it easy to mirror a complex
-            // device without having to write a lot of rules here.
+            // but cannot toggle outputs or implement complex button
+            // assignments. We address this limitation by simulating pressing
+            // the button on a different Lutron keypad. This allows us to
+            // mirror a complex assignment without having to write a lot of
+            // rules here.
+            // Alternatively, for very simple scenarios, we can directly
+            // toggle an output between "0%" and "100%". This is much more
+            // limited, but frequently all that is needed.
+            // As before, this information can also be specified in-line in the
+            // Lutron software by extending the label of the Pico button.
+            // For example:
+            // "Backyard: 3"
+            // "Away: 1, 1"
+            // "All Off: 1, 6"
             { "TOGGLE": [ 3 ] },     // Use Lutron integration id of RRD switch.
        "3": { "DEVICE": [ 1, 1 ] },  // Use Lutron integration id of keypad.
        "4": { "DEVICE": [ 1, 6 ] } } // The second value is the button number.

@@ -25,6 +25,16 @@ namespace Util {
     return (wsback <= wsfront ? std::string() : std::string(wsfront, wsback));
   }
 
+
+  inline bool starts_with(const std::string& s, const std::string starts) {
+    return !s.rfind(starts, 0);
+  }
+
+  inline bool ends_with(const std::string& s, const std::string& ends) {
+    return ends.size() <= s.size() &&
+           std::equal(ends.rbegin(), ends.rend(), s.rbegin());
+  }
+
   template <class F>
   struct recursive_ {
     F f;

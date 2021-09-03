@@ -13,17 +13,32 @@
 
 class RadioRA2 {
  public:
+  enum DeviceType {
+    DEV_UNKNOWN,
+    DEV_PICO_KEYPAD,
+    DEV_SEETOUCH_KEYPAD,
+    DEV_HYBRID_SEETOUCH_KEYPAD,
+    DEV_MOTION_SENSOR,
+    DEV_MAIN_REPEATER
+  };
+
   inline static const std::string ALIAS = "RRA2:";
   inline static const std::string DMXALIAS = "DMX:";
 
   RadioRA2(Event& event,
            std::function<void ()> init = nullptr,
-           std::function<void (const std::string& line)> input = nullptr,
+           std::function<void (const std::string& line,
+                               const std::string& context)> input = nullptr,
            std::function<void ()> hb = nullptr,
            std::function<void ()> schemaInvalid = nullptr);
   ~RadioRA2();
   int addOutput(const std::string name, std::function<void (int)> cb);
   void addToButton(int kp, int bt, int id, int level, bool makeToggle = false);
+  void toggleOutput(int out);
+  DeviceType deviceType(int id) {
+    auto dev = devices_.find(id);
+    return dev != devices_.end() ? dev->second.type : DEV_UNKNOWN;
+  }
   void command(const std::string& cmd,
                std::function<void (const std::string& res)> cb = [](auto){},
                std::function<void (void)> err = [](){}) {
@@ -127,15 +142,6 @@ class RadioRA2 {
     /* 5 */ BUTTON_RAISE            // Raise last button pressed
   };
 
-  enum DeviceType {
-    DEV_UNKNOWN,
-    DEV_PICO_KEYPAD,
-    DEV_SEETOUCH_KEYPAD,
-    DEV_HYBRID_SEETOUCH_KEYPAD,
-    DEV_MOTION_SENSOR,
-    DEV_MAIN_REPEATER
-  };
-
   struct Assignment {
     Assignment(int id, int level)
       : id(id), level(level) { }
@@ -224,7 +230,7 @@ class RadioRA2 {
   Event& event_;
   Lutron lutron_;
   bool initialized_;
-  std::function<void (const std::string& line)> input_;
+  std::function<void (const std::string&, const std::string&)> input_;
   std::function<void ()> hb_;
   std::function<void ()> schemaInvalid_;
   std::vector<std::function<void ()>> onInit_;
