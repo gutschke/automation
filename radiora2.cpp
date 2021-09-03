@@ -7,6 +7,7 @@
 
 #include <fmt/format.h>
 #include <iostream>
+#include <sstream>
 
 #include "lutron.h"
 #include "radiora2.h"
@@ -773,4 +774,84 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
     DBG("Don't know what to do about button \"" << button.name << "\"");
     break;
   }
+}
+
+std::string RadioRA2::getKeypads() {
+  // Returns a simplified snapshot of our internal state in JSON format.
+  // All strings need to be escaped first. We also remove inlined configuration
+  // data that follows a ":" colon.
+  const auto esc = [](const std::string &s) {
+    std::string str(s);
+    const auto it = str.find(':');
+    if (it != std::string::npos) {
+      str.erase(it);
+    }
+    str = Util::trim(str);
+    std::ostringstream o;
+    for (auto c = str.cbegin(); c != str.cend(); c++) {
+      switch (*c) {
+      case '\x00' ... '\x09':
+      case '\x0b' ... '\x1f':
+        o << fmt::format("\\u{:04x}", (unsigned)(unsigned char)*c);
+        break;
+      case '\x0a': o << "\\n"; break;
+      case '\x22': o << "\\\""; break;
+      case '\x5c': o << "\\\\"; break;
+      default: o << *c;
+      }
+    }
+    return o.str();
+  };
+  std::ostringstream str;
+  str << "{";
+  // Iterate over all devices, but only return information for actual keypads.
+  // Most notably, this skips over the virtual buttons associated with the
+  // Lutron controller itself.
+  bool firstKeypad = true;
+  for (auto device = devices_.begin(); device != devices_.end(); ++device) {
+    while (device->second.type != DEV_PICO_KEYPAD &&
+           device->second.type != DEV_SEETOUCH_KEYPAD &&
+           device->second.type != DEV_HYBRID_SEETOUCH_KEYPAD) {
+      if (++device == devices_.end()) {
+        goto allDevices;
+      }
+    }
+    // Keeping track of whether to include a trailing "," comma is tedious.
+    if (firstKeypad) {
+      firstKeypad = false;
+    } else {
+      str << ",";
+    }
+    const auto dev = device->second;
+    // Output the name of the keypad, the LEDs and the buttons.
+    str << fmt::format("\"{}\":{{\"label\":\"{}\",\"leds\":{{",
+                       dev.id, esc(dev.name));
+    bool firstLed = true;
+    for (auto button = dev.components.begin(); button != dev.components.end();
+         ++button) {
+      while (button->second.led < 0) {
+        if (++button == dev.components.end()) {
+          goto allLeds;
+        }
+      }
+      if (firstLed) {
+        firstLed = false;
+      } else {
+        str << ",";
+      }
+      const auto btn = button->second;
+      str << fmt::format("\"{}\":{}", btn.id, (int)btn.ledState);
+    }
+  allLeds:
+    str << "},\"buttons\":{";
+    for (auto button = dev.components.begin(); button != dev.components.end();){
+      const auto btn = button->second;
+      str << fmt::format("\"{}\":\"{}\"{}", btn.id, esc(btn.name),
+                         ++button != dev.components.end() ? "," : "");
+    }
+    str << "}}";
+  }
+ allDevices:
+  str << "}";
+  return str.str();
 }
