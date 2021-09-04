@@ -17,6 +17,9 @@ class WS {
   void broadcast(const std::string& s);
 
  private:
+  static inline const char errURI[] = "/err.html";
+  static inline const char keypadsURI[] = "/keypads.json";
+
   Event *event_;
   std::function<const std::string ()> keypads_;
   std::function<void (const std::string&)> cmd_;
@@ -25,7 +28,7 @@ class WS {
   lws_context *ctx_;
   lws_event_loop_ops ops_;
   lws_plugin_evlib_t evlib_;
-  lws_http_mount mount_[2];
+  lws_http_mount mount_[3];
   lws_context_creation_info info_;
   lws_protocols protocols_[4];
   lws_protocol_vhost_options headers_[5];

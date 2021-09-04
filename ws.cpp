@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "util.h"
 #include "ws.h"
 
@@ -45,16 +47,22 @@ WS::WS(Event* event, int port, std::function<const std::string ()> keypads,
   mount_[0].def = "index.html";
   mount_[0].origin_protocol = LWSMPRO_FILE;
   mount_[0].mount_next = &mount_[1];
-  mount_[1].mountpoint = "/keypads.json";
-  mount_[1].mountpoint_len = 13;
+  mount_[1].mountpoint = errURI;
+  mount_[1].mountpoint_len = sizeof(errURI)-1;
   mount_[1].def = "";
-  mount_[1].protocol = "keypads";
+  mount_[1].protocol = "internal";
   mount_[1].origin_protocol = LWSMPRO_CALLBACK;
+  mount_[1].mount_next = &mount_[2];
+  mount_[2].mountpoint = keypadsURI;
+  mount_[2].mountpoint_len = sizeof(keypadsURI)-1;
+  mount_[2].def = "";
+  mount_[2].protocol = "internal";
+  mount_[2].origin_protocol = LWSMPRO_CALLBACK;
 
   // Configure supported protocols.
   protocols_[0].name = "http";
   protocols_[0].callback = lws_callback_http_dummy;
-  protocols_[1].name = "keypads";
+  protocols_[1].name = "internal";
   protocols_[1].callback = keypadsCallback;
   protocols_[1].per_session_data_size = sizeof(std::string);
   protocols_[2].name = "ws";
@@ -85,7 +93,7 @@ WS::WS(Event* event, int port, std::function<const std::string ()> keypads,
   // Configure web server settings.
   info_.port = port;
   info_.mounts = &mount_[0];
-  info_.error_document_404 = "/404.html";
+  info_.error_document_404 = errURI;
   info_.headers = headers_;
   info_.protocols = protocols_;
   info_.event_lib_custom = &evlib_;
@@ -181,19 +189,31 @@ int WS::keypadsCallback(lws *wsi, lws_callback_reasons reason,
     DBG("Keypads::LWS_CALLBACK_HTTP_BIND_PROTOCOL");
     new (pending) std::string();
     break;
-  case LWS_CALLBACK_HTTP:
+  case LWS_CALLBACK_HTTP: {
     DBG("Keypads::LWS_CALLBACK_HTTP");
     if (!pending) break;
-    if (that->keypads_) {
+    int status;
+    const char *contentType;
+    ssize_t l = strlen((char *)in);
+    ssize_t n = lws_hdr_copy(wsi, (char*)buf, sizeof(buf), WSI_TOKEN_GET_URI)-l;
+    if (n == sizeof(errURI)-1 && !memcmp(errURI, buf, n)) {
+      status = HTTP_STATUS_NOT_FOUND;
+      contentType = "text/html";
+      *pending =
+        "<hmtl><head><title>Error</title></head><body>"
+        "<h1>Error</h1></body></html>";
+    } else if (that->keypads_) {
+      status = HTTP_STATUS_OK;
+      contentType = "application/json";
       *pending = that->keypads_();
     }
-    if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK, "application/json",
+    if (lws_add_http_common_headers(wsi, status, contentType,
                                     pending->size(), &ptr, end) ||
         lws_finalize_write_http_header(wsi, start, &ptr, end)) {
       return 1;
     }
     lws_callback_on_writable(wsi);
-    return 0;
+    return 0; }
   case LWS_CALLBACK_HTTP_WRITEABLE: {
     DBG("Keypads::LWS_CALLBACK_HTTP_WRITEABLE");
     if (!pending) break;
