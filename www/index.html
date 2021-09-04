@@ -98,13 +98,14 @@
         socket.onmessage = (event) => {
           // Split the status message into switch integration id, and button
           // component number. Then add/remove CSS classes as needed.
-          const msg = event.data.split(',');
-          const sw = document.getElementById(msg[0]);
-          const li = sw.getElementsByTagName('LI');
-          const leds = sw.getElementsByTagName('LI');
-          const led = leds[msg[1] - 1];
-          if (msg[2] == 1) led.classList.add('on');
-          else             led.classList.remove('on');
+          for (const part of event.data.split(' ')) {
+            const msg = part.split(',');
+            const led = document.getElementById(msg[0] + '/' + msg[1]);
+            if (led) {
+              if (msg[2] == 1) led.classList.add('on');
+              else             led.classList.remove('on');
+            }
+          }
         };
         // In case of error or closed connection, retry a little while later.
         socket.onerror = socket.onclose = () => {
@@ -214,13 +215,23 @@
           if (xhr.status === 200) {
             html = '';
             for (const keypad in xhr.response) {
-              // Switches are simply DIV elements containing an unordered list
+              // Switches are simply DIV elements containing an unordered list.
+              // CSS styles encode additional data that we know about each
+              // button (e.g. this is an up/down dimmer switch, the associated
+              // status LED is turned on, or keypad is a Pico remote that
+              // doesn't have dimmer controls nor LEDs).
               const k = xhr.response[keypad];
+              // As keypad with absolutely no LEDs is a Pico remote.
               const isPico = !Object.keys(k.leds).length;
               html += `<div class="switch${
                          isPico ? " pico" : ""}" id="${keypad}"><ul>`;
               for (const button in k.buttons) {
                 const isOn = k.leds[button];
+                // Dimmer buttons have no user-configurable label. The
+                // daemon sends them as booleans to make it easy to tell them
+                // apart from regular buttons. The "false" button is the one
+                // for lowering brightness, the "true" button is the one for
+                // raising brightness.
                 const isLower = typeof k.buttons[button] === "boolean" &&
                                 !k.buttons[button];
                 const isRaise = typeof k.buttons[button] === "boolean" &&
@@ -229,20 +240,26 @@
                 if (isOn || isLower || isRaise || isPico) {
                   cls = ' class="';
                   if (isOn) {
+                    // When a load is turned on or a scene is active, the LED
+                    // lights up.
                     cls += 'on';
                   } else if (isLower) {
+                    // Dimmer buttons have no LED associated with them.
                     cls += 'dimmer lower noLED';
                   } else if (isRaise) {
                     cls += 'dimmer raise noLED';
                   } else if (isPico) {
+                    // Pico remotes have no LEDs.
                     cls += 'noLED';
                   }
                   cls += '"';
                 }
                 let content = '';
                 if (typeof k.buttons[button] === 'string') {
+                  // User-defined label for this button.
                   content = k.buttons[button];
                 } else if (typeof k.buttons[button] === "boolean") {
+                  // The dimmer controls have a "⇓" Down or "⇑" Up button.
                   content = '<span>\u00A0';
                   content += k.buttons[button] ? '\u21D1' : '\u21D3';
                   content += '\u00A0</span>';

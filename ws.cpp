@@ -12,7 +12,6 @@ WS::WS(Event* event, int port, std::function<const std::string ()> keypads,
     tmo = std::max(1u, tmo);
     unsigned newTmo = lws_service_adjust_timeout(ctx_, tmo, 0);
     if (newTmo == 0) {
-      DBG("lws_service_tsi()");
       lws_service_tsi(ctx_, -1, 0);
     } else if (newTmo < tmo) {
       // Need to add a timeout to make poll() exit early and for the
@@ -60,7 +59,7 @@ WS::WS(Event* event, int port, std::function<const std::string ()> keypads,
   protocols_[1].per_session_data_size = sizeof(KeypadsState);
   protocols_[2].name = "ws";
   protocols_[2].callback = websocketCallback;
-  protocols_[2].per_session_data_size = sizeof(SessionState);
+  protocols_[2].per_session_data_size = sizeof(std::string *);
   protocols_[2].rx_buffer_size = 128;
 
   // Set global options for security headers.
@@ -131,10 +130,6 @@ int WS::accept(lws *wsi) {
 void WS::io(lws *wsi, unsigned flags) {
   // libwebsocket calls this function whenever it wants to add or remove
   // event handlers for the event loop.
-//DBG("WS::io(" << lws_get_socket_fd(wsi) << ", " <<
-//    ((flags & LWS_EV_START) ? "START" : "STOP") <<
-//    ((flags & LWS_EV_READ) ? ", READ" : "") <<
-//    ((flags & LWS_EV_READ) ? ", WRITE" : "") << ")");
   WS *ws = *(WS **)lws_evlib_wsi_to_evlib_pt(wsi);
   if (flags & LWS_EV_READ) {
     ws->event_->removePollFd(lws_get_socket_fd(wsi), POLLIN);
@@ -241,23 +236,18 @@ int WS::keypadsCallback(lws *wsi, lws_callback_reasons reason,
 int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
                         void *user, void *in, size_t len) {
   WS *that = (WS *)lws_context_user(lws_get_context(wsi));
-  auto *session = (SessionState *)user;
-  auto *host = (HostState *)lws_protocol_vh_priv_get(lws_get_vhost(wsi),
-                                                     lws_get_protocol(wsi));
+  auto pending = user ? *(std::string **)user : nullptr;
+
   switch (reason) {
   case LWS_CALLBACK_PROTOCOL_INIT:
     DBG("WebSocket::LWS_CALLBACK_PROTOCOL_INIT");
-    host = new (lws_protocol_vh_priv_zalloc(lws_get_vhost(wsi),
-                                            lws_get_protocol(wsi),
-                                            sizeof(HostState)))
-           HostState();
-    if (!host->ring) {
-      return 1;
-    }
     break;
   case LWS_CALLBACK_PROTOCOL_DESTROY:
     DBG("WebSocket::LWS_CALLBACK_PROTOCOL_DESTROY");
-    lws_ring_destroy(host->ring);
+    for (auto& [ wsi, pending ] : that->wsi_) {
+      delete pending;
+    }
+    that->wsi_.clear();
     break;
   case LWS_CALLBACK_HTTP_BIND_PROTOCOL:
     DBG("WebSocket::LWS_CALLBACK_HTTP_BIND_PROTOCOL");
@@ -270,39 +260,38 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
     break;
   case LWS_CALLBACK_ESTABLISHED:
     DBG("WebSocket::LWS_CALLBACK_ESTABLISHED");
-    session->tail = lws_ring_get_oldest_tail(host->ring);
-    session->wsi = wsi;
-    // Add subscribers to the list of live sessions held in the host.
-    lws_ll_fwd_insert(session, list, host->sessions);
+    // New websocket opened connection to us and is waiting for updates.
+    if (that->wsi_.find(wsi) == that->wsi_.end()) {
+      that->wsi_[wsi] = *(std::string **)user = new std::string(LWS_PRE, 0);
+    }
     break;
-  case LWS_CALLBACK_CLOSED:
+  case LWS_CALLBACK_CLOSED: {
     DBG("WebSocket::LWS_CALLBACK_CLOSED");
-    // Remove our closing session from the list of live sessions.
-    lws_ll_fwd_remove(SessionState, list, session, host->sessions);
-    break;
+    // Remove closed websocket session from the list of live sessions.
+    auto it = that->wsi_.find(wsi);
+    if (it != that->wsi_.end()) {
+      delete it->second;
+      that->wsi_.erase(it);
+      *(std::string **)user = nullptr;
+    }
+    break; }
   case LWS_CALLBACK_SERVER_WRITEABLE: {
     DBG("WebSocket::LWS_CALLBACK_SERVER_WRITEABLE");
-    const auto pmsg =
-      (Message *)lws_ring_get_element(host->ring, &session->tail);
-    if (!pmsg) {
+    if (!pending || pending->size() <= LWS_PRE) {
       break;
     }
-    // The "Message" object transparently handles LWS_PRE allocation.
-    int m = lws_write(wsi, pmsg->data(), pmsg->size(), LWS_WRITE_TEXT);
-    if (m < (int)pmsg->size()) {
+    if (lws_write(wsi, (unsigned char *)&(*pending)[LWS_PRE],
+                  pending->size() - LWS_PRE, LWS_WRITE_TEXT)
+        < (ssize_t)(pending->size() - LWS_PRE)) {
       return -1;
     }
-    lws_ring_consume_and_update_oldest_tail(
-      host->ring, SessionState, &session->tail, 1, host->sessions, tail, list);
-    if (lws_ring_get_element(host->ring, &session->tail)) {
-      lws_callback_on_writable(session->wsi);
-    }
+    pending->erase(LWS_PRE);
     break; }
   case LWS_CALLBACK_RECEIVE: {
     DBG("WebSocket::LWS_CALLBACK_RECEIVE");
     const auto received = std::string((char *)in, len);
     DBG("\"" << received << "\"");
-    if (that->cmd_) {
+    if (that->cmd_ && received.size() > 0 && received[0] == '#') {
       that->cmd_(received);
     }
     break; }
@@ -323,4 +312,16 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
 }
 
 void WS::broadcast(const std::string& s) {
+// DBG("WebSocket::broadcast(\"" << s << "\")");
+  // Newly enqueued data must be send to all listening clients when they
+  // become writable.
+  for (auto& [ wsi, pending ] : wsi_) {
+    if (pending->size() > LWS_PRE) {
+      pending->append(1, ' ');
+    }
+    pending->append(s);
+
+    // Notify web socket.
+    lws_callback_on_writable(wsi);
+  }
 }

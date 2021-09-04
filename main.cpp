@@ -311,11 +311,15 @@ static void server() {
     event,
     site.contains("DMX SERIAL") ? site["DMX SERIAL"].get<std::string>() : "");
   Relay relay(event);
+  WS *ws = nullptr;
   RadioRA2 ra2(
     event,
     [&]() { augmentConfig(site, ra2, dmx, relay); },
     [&](const std::string& line, const std::string& context) {
       readLine(ra2, dmx, relay, line, context); },
+    [&](int kp, int led, bool state) {
+      if (ws) ws->broadcast(fmt::format("{},{},{}", kp, led, (int)state));
+    },
     // Communicate with parent process. This allows the watchdog
     // to kill us, if we become unresponsive. And it also allows
     // us to request a restart, if the automation schema changed
@@ -326,9 +330,10 @@ static void server() {
     "",
     site.contains("USER") ? site["USER"].get<std::string>() : "",
     site.contains("PASSWORD") ? site["PASSWORD"].get<std::string>() : "");
-  WS ws(&event, 8080,
-        [&]() { return ra2.getKeypads(); },
-        [&](const std::string& s) { ra2.command(s); });
+  WS ws_(&event, 8080,
+         [&]() { return ra2.getKeypads(); },
+         [&](const std::string& s) { ra2.command(s); });
+  ws = &ws_;
   event.loop();
 }
 

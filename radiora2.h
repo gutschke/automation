@@ -29,6 +29,7 @@ class RadioRA2 {
            std::function<void ()> init = nullptr,
            std::function<void (const std::string& line,
                                const std::string& context)> input = nullptr,
+           std::function<void (int, int, bool)> ledState = nullptr,
            std::function<void ()> hb = nullptr,
            std::function<void ()> schemaInvalid = nullptr,
            const std::string& gateway = "",
@@ -235,6 +236,7 @@ class RadioRA2 {
   Lutron lutron_;
   bool initialized_;
   std::function<void (const std::string&, const std::string&)> input_;
+  std::function<void (int, int, bool)> ledState_;
   std::function<void ()> hb_;
   std::function<void ()> schemaInvalid_;
   std::vector<std::function<void ()>> onInit_;

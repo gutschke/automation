@@ -18,6 +18,7 @@ RadioRA2::RadioRA2(Event& event,
                    std::function<void ()> init,
                    std::function<void (const std::string& line,
                                        const std::string& context)> input,
+                   std::function<void (int, int, bool)> ledState,
                    std::function<void ()> hb,
                    std::function<void ()> schemaInvalid,
                    const std::string& gateway,
@@ -31,6 +32,7 @@ RadioRA2::RadioRA2(Event& event,
             gateway, username, password),
     initialized_(false),
     input_(input),
+    ledState_(ledState),
     hb_(hb),
     schemaInvalid_(schemaInvalid),
     recompute_(0),
@@ -148,6 +150,11 @@ void RadioRA2::readLine(const std::string& line) {
           context = led->second.name;
           led->second.uncertain = (*endPtr != '0' && *endPtr != '1')||endPtr[1];
           if (!led->second.uncertain) {
+            if (ledState_ &&
+                (keypad.type == DEV_SEETOUCH_KEYPAD ||
+                 keypad.type == DEV_HYBRID_SEETOUCH_KEYPAD)) {
+              ledState_(keypad.id, led->second.id, *endPtr == '1');
+            }
             led->second.ledState = *endPtr == '1';
           }
         }
@@ -574,6 +581,11 @@ void RadioRA2::refreshCurrentState(std::function<void ()> cb) {
           // depending on why the controller lost track of the LED state.
           // Hopefully, at that point, RadioRA2::recomputeLEDs() will
           // eventually bring everything back to a consistent state.
+          if (ledState_ &&
+              (dev.second.type == DEV_SEETOUCH_KEYPAD ||
+               dev.second.type == DEV_HYBRID_SEETOUCH_KEYPAD)) {
+            ledState_(dev.second.id, comp.second.id, false);
+          }
           comp.second.ledState = 0;
           lutron_.command(fmt::format("?DEVICE,{},{},{}",
                                       dev.second.id,
@@ -636,6 +648,11 @@ void RadioRA2::recomputeLEDs() {
           DBG("LED \"" << component.name << "\" (" <<
               component.id << ") on \"" << device.name <<
               "\" should be " << (ledState ? "on" : "off"));
+          if (ledState_ &&
+              (device.type == DEV_SEETOUCH_KEYPAD ||
+               device.type == DEV_HYBRID_SEETOUCH_KEYPAD)) {
+            ledState_(device.id, component.id, ledState);
+          }
           lutron_.command(fmt::format("#DEVICE,{},{},9,{}",
             device.id, component.led, ledState ? 1 : 0));
         }

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <functional>
+#include <map>
+#include <string>
+
 #include "event.h"
 #include "libwebsockets.h"
 
@@ -17,48 +21,6 @@ class WS {
     std::string data;
   };
 
-  class Message {
-  public:
-    Message& operator=(const std::string& s) {
-      if (initialized_) {
-        using namespace std;
-        msg.~string();
-      }
-      (new (&msg) std::string(LWS_PRE, '\000'))->append(s);
-      initialized_ = true;
-      return *this;
-    }
-    static void destroy(void *msg) {
-      if (!((Message *)msg)->initialized_) {
-        ((Message *)msg)->~Message();
-      }
-    }
-    size_t size() { return msg.size() - LWS_PRE; }
-    unsigned char *data() { return (unsigned char *)&msg[LWS_PRE]; }
-  private:
-    Message();
-    ~Message() { initialized_ = false; };
-    std::string msg;
-    bool initialized_;
-  };
-
-  struct SessionState {
-    lws          *wsi;
-    SessionState *list;
-    uint32_t     tail;
-  };
-
-  struct HostState {
-    HostState()
-      : ring(lws_ring_create(sizeof(Message), 50, Message::destroy)),
-        sessions(nullptr) {
-      // WARNING! This object is created with placement new and libwebsockets
-      // will never call the destructor. Store POD types only.
-    }
-    lws_ring     *ring;
-    SessionState *sessions;
-  };
-
   Event *event_;
   std::function<const std::string ()> keypads_;
   std::function<void (const std::string&)> cmd_;
@@ -71,6 +33,7 @@ class WS {
   lws_context_creation_info info_;
   lws_protocols protocols_[4];
   lws_protocol_vhost_options headers_[5];
+  std::map<lws *, std::string *> wsi_;
 
   static int init(lws_context *ctx, void *_loop, int tsi);
   static int accept(lws *wsi);
