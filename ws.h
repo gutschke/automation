@@ -7,8 +7,10 @@
 class WS {
  public:
   WS(Event *event, int port = 80,
-     std::function<const std::string ()> keypads = nullptr);
+     std::function<const std::string ()> keypads = nullptr,
+     std::function<void (const std::string&)> cmd = nullptr);
   ~WS();
+  void broadcast(const std::string& s);
 
  private:
   struct KeypadsState {
@@ -59,6 +61,7 @@ class WS {
 
   Event *event_;
   std::function<const std::string ()> keypads_;
+  std::function<void (const std::string&)> cmd_;
   void *loop_;
   void *loops_;
   lws_context *ctx_;

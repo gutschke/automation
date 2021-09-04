@@ -2,8 +2,9 @@
 #include "ws.h"
 
 
-WS::WS(Event* event, int port, std::function<const std::string ()> keypads)
-  : event_(event), keypads_(keypads), loops_(this),
+WS::WS(Event* event, int port, std::function<const std::string ()> keypads,
+       std::function<void (const std::string&)> cmd)
+  : event_(event), keypads_(keypads), cmd_(cmd), loops_(this),
     ctx_{0}, ops_{0}, evlib_{0}, mount_{0}, info_{0}, protocols_{0},
     headers_{0} {
   // Make our event loop compatible with what libwebsocket wants.
@@ -239,9 +240,10 @@ int WS::keypadsCallback(lws *wsi, lws_callback_reasons reason,
 
 int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
                         void *user, void *in, size_t len) {
+  WS *that = (WS *)lws_context_user(lws_get_context(wsi));
   auto *session = (SessionState *)user;
   auto *host = (HostState *)lws_protocol_vh_priv_get(lws_get_vhost(wsi),
-                                                    lws_get_protocol(wsi));
+                                                     lws_get_protocol(wsi));
   switch (reason) {
   case LWS_CALLBACK_PROTOCOL_INIT:
     DBG("WebSocket::LWS_CALLBACK_PROTOCOL_INIT");
@@ -256,6 +258,15 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
   case LWS_CALLBACK_PROTOCOL_DESTROY:
     DBG("WebSocket::LWS_CALLBACK_PROTOCOL_DESTROY");
     lws_ring_destroy(host->ring);
+    break;
+  case LWS_CALLBACK_HTTP_BIND_PROTOCOL:
+    DBG("WebSocket::LWS_CALLBACK_HTTP_BIND_PROTOCOL");
+    break;
+  case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION:
+    DBG("WebSocket::LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION");
+    break;
+  case LWS_CALLBACK_ADD_HEADERS:
+    DBG("WebSocket::LWS_CALLBACK_ADD_HEADERS");
     break;
   case LWS_CALLBACK_ESTABLISHED:
     DBG("WebSocket::LWS_CALLBACK_ESTABLISHED");
@@ -287,6 +298,20 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
       lws_callback_on_writable(session->wsi);
     }
     break; }
+  case LWS_CALLBACK_RECEIVE: {
+    DBG("WebSocket::LWS_CALLBACK_RECEIVE");
+    const auto received = std::string((char *)in, len);
+    DBG("\"" << received << "\"");
+    if (that->cmd_) {
+      that->cmd_(received);
+    }
+    break; }
+  case LWS_CALLBACK_WS_PEER_INITIATED_CLOSE:
+    DBG("WebSocket::LWS_CALLBACK_WS_PEER_INITIATED_CLOSE");
+    break;
+  case LWS_CALLBACK_WS_SERVER_DROP_PROTOCOL:
+    DBG("WebSocket::LWS_CALLBACK_WS_SERVER_DROP_PROTOCOL");
+    break;
   case LWS_CALLBACK_EVENT_WAIT_CANCELLED:
 //  DBG("WebSocket::LWS_CALLBACK_EVENT_WAIT_CANCELLED");
     break;
@@ -295,4 +320,7 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
     break;
   }
   return 0;
+}
+
+void WS::broadcast(const std::string& s) {
 }

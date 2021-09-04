@@ -7,15 +7,20 @@
       /* Each Keypad switch is contained in a DIV that represents the wallplate.
        * We mimic the general proportions of a standard Decora wallplate.
        */
-      div.switch {
-          display: inline-block;
+      body {
           font-family: Arial Narrow;
-          font-size: 12px;
-          width: 96px;
-          height: 194px;
-          border: 2px solid #000;
+          font-size: 62.5%;
+      }
+      div.switch {
+          display: inline-grid;
+          grid-template-columns: 1fr;
+          grid-template-rows: 1fr;
+          place-items: stretch;
+          width: 4.5rem;
+          height: 9rem;
+          padding: 2rem 2rem;
+          border: 2px solid black;
           border-radius: 10px;
-          padding: 68px 52px 68px 52px;
           box-shadow: 10px 10px 5px grey;
           margin: 10px;
           user-select: none;
@@ -23,84 +28,59 @@
       /* The actual switch is represented by an unordered list UL element.
        */
       div.switch > ul {
-          box-shadow: 1px 1px 1px grey;
-          border-bottom: 2px solid black;
           padding: 0px;
           margin: 0px;
-          line-height: 23px;
+          display: grid;
       }
-      /* Buttons turn dark, while they are clicked.
-       */
-      div.switch > ul > li:not(:last-child).clicked {
-          background-color: #888;
+      div.switch:not(.pico) > ul {
+          grid: repeat(6, 1fr) 1rem / 1fr 1fr;
       }
-      div.switch > ul > li > span.clicked {
-          background-color: #888;
-      }
-      /* On non-touch devices, buttons dim when the mouse moves over them.
-       */
-      @media (hover: hover) {
-        div.switch > ul > li:not(:last-child):not(.clicked):hover {
-            background-color: #eee;
-        }
-        div.switch > ul > li > span:not(.clicked):hover {
-            background-color: #eee;
-        }
-      }
-      /* Device buttons have an indicator LED that can turn on and off.
-       */
-      div.switch > ul > li:not(:last-child):before {
-          content: "\26AA\A0\A0";
-      }
-      div.switch > ul > li.on:not(:last-child):before {
-          content: "\1F535\A0\A0";
-      }
-      /* The top-most button needs a differently sized border for everything to
-       * line up.
-       */
-      div.switch > ul > li:first-child {
-          border-top: 2px solid #000;
+      div.pico > ul {
+          grid: repeat(auto-fit, 1fr) / 1fr;
       }
       /* Style individual list items LI to look like buttons
        */
       div.switch > ul > li {
           list-style: none;
-          border: 1px solid #000;
-          border-left: 2px solid #000;
-          border-right: 3px solid #000;
-          padding-left: 5px;
-          padding-top: 2px;
+          grid-column-start: 1;
+          grid-column-end: 3;
+          overflow: hidden;
+          border: 1px solid black;
       }
-      /* The last row has a special button that is split in have for DOWN and UP
+      /* The last row has a special button that is split in half for DOWN and UP
        */
-      div.switch > ul > li > span:first-child:before {
-          content: "\A0\21D3\A0";
+      div.switch > ul > li.dimmer {
+          display: inline-grid;
+          place-items: center;
+          place-self: center stretch;
       }
-      div.switch > ul > li > span:last-child:before {
-          content: "\A0\21D1\A0";
+      div.switch > ul > li.lower {
+          grid-column-start: 1;
+          grid-column-end: 2;
       }
-      div.switch > ul > li:last-child {
-          display: flex;
-          flex-flow: row nowrap;
-          justify-content: space-evenly;
-          padding: 0px;
+      div.switch > ul > li.raise {
+          grid-column-start: 2;
+          grid-column-end: 3;
       }
-      div.switch > ul > li > span {
-          width: 100%;
-          height: 100%;
-          text-align: center;
-          border-left:  1px solid #000;
-          border-right: 1px solid #000;
-          height: 23px;
-      }
-      /* The split buttons need differently sized borders for everything to
-       * line up.
+      /* Device buttons have an indicator LED that can turn on and off.
        */
-      div.switch > ul > li > span:first-child {
-          border-left:  0px;
+      div.switch > ul > li:not(.noLED):before {
+          content: "\26AA\A0\A0";
       }
-      div.switch > ul > li > span:last-child {
-          border-right: 0px;
+      div.switch > ul > li.on:before {
+          content: "\1F535\A0\A0";
+      }
+      /* Buttons turn dark, while they are clicked.
+       */
+      div.switch > ul > li.clicked {
+          background-color: #888;
+      }
+      /* On non-touch devices, buttons dim when the mouse moves over them.
+       */
+      @media (hover: hover) {
+        div.switch > ul > li:not(.clicked):hover {
+            background-color: #eee;
+        }
       }
     </style>
     <script>
@@ -110,12 +90,11 @@
         let timer;
         // Send a WebSocket request to be notified of LED status changes.
         try {
-          socket = new WebSocket(location.origin.replace(/^http/, 'ws'));
+          socket = new WebSocket(location.origin.replace(/^http/, 'ws'), 'ws');
         } catch (e) {
           timer = setTimeout(monitorLEDs, 5000);
           return;
         }
-        socket.onopen = () => socket.send('subscribe');
         socket.onmessage = (event) => {
           // Split the status message into switch integration id, and button
           // component number. Then add/remove CSS classes as needed.
@@ -143,49 +122,35 @@
         // Iterate over all switch and button and assign the required mouse and
         // touch event listeners.
         for (const sw of document.getElementsByClassName('switch')) {
-          let i = 0;
           for (const li of sw.getElementsByTagName('LI')) {
-            if (li === li.parentNode.lastChild) {
-              // Bottom-most entry holds the down/up buttons
-              i = 17;
-              for (let sp = li.firstElementChild; sp;
-                   sp = sp.nextElementSibling) {
-                const elem      = sp;
-                const swid      = parseInt(sw.id);
-                const component = ++i;
-                sp.onmousedown  = () => mousedown(elem, swid, component);
-                sp.onmouseup    = () => mouseup(elem, swid, component);
-                sp.onmouseenter = () => mouseenter(elem, swid, component);
-                sp.onmouseleave = () => mouseleave(elem, swid, component);
-                sp.ontouchstart = () => mousedown(elem, swid, component);
-                sp.ontouchend   = () => mouseup(elem, swid, component);
-              }
-              continue;
-            }
-            // One of six regular buttons.
             const elem      = li;
             const swid      = parseInt(sw.id);
-            const component = ++i;
-            li.onmousedown  = () => mousedown(elem, swid, component);
-            li.onmouseup    = () => mouseup(elem, swid, component);
-            li.onmouseenter = () => mouseenter(elem, swid, component);
-            li.onmouseleave = () => mouseleave(elem, swid, component);
-            li.ontouchstart = () => mousedown(elem, swid, component);
-            li.ontouchend   = () => mouseup(elem, swid, component);
+            const component = parseInt(li.id.split('/')[1]);
+            li.onmousedown  = (e) => mousedown(e, elem, swid, component);
+            li.onmouseup    = (e) => mouseup(e, elem, swid, component);
+            li.onmouseenter = (e) => mouseenter(e, elem, swid, component);
+            li.onmouseleave = (e) => mouseleave(e, elem, swid, component);
+            li.ontouchstart = (e) => mousedown(e, elem, swid, component);
+            li.ontouchend   = (e) => mouseup(e, elem, swid, component);
           }
         }
         // Make sure we always notice when the mouse button is released.
-        document.getElementsByTagName('BODY')[0].onmouseup = () => mouseup();
-        document.getElementsByTagName('BODY')[0].touchup = () => mouseup();
+        document.getElementsByTagName('BODY')[0].onmouseup = (e) => mouseup(e);
+        document.getElementsByTagName('BODY')[0].touchup = (e) => mouseup(e);
       }
 
       var clickTarget;
 
-      function mousedown(elem, sw, component) {
+      function mousedown(event, elem, sw, component) {
+        if (event.button) {
+          return;
+        }
+
         // If some other element is clicked on, deselect previously selected
         // element, if any.
         if (clickTarget && elem !== clickTarget.elem) {
-          mouseup(clickTarget.elem, clickTarget.sw, clickTarget.component);
+          mouseup(event, clickTarget.elem, clickTarget.sw,
+                  clickTarget.component);
         }
         // Remember the currently active element.
         clickTarget = { elem: elem, sw: sw, component: component };
@@ -196,28 +161,34 @@
         // natural user interface allows moving the mouse out of the element
         // to cancel the operation. So, don't report a click until the button
         // is released.
-        if (component >= 18) {
+        if (elem.classList.contains('dimmer')) {
+          console.log(`#DEVICE,${sw},${component},3`);
           socket.send(`#DEVICE,${sw},${component},3`);
         }
       }
 
-      function mouseup(elem, sw, component) {
+      function mouseup(event, elem, sw, component) {
         if (clickTarget) {
-          if (clickTarget.component >= 18) {
+          if (clickTarget.elem.classList.contains('dimmer')) {
             // For dimmer buttons, report the mouse up event.
-            socket.send(`#DEVICE,${sw},${component},4`);
-          } else if (elem === clickTarget.elem) {
+            console.log(`#DEVICE,${clickTarget.sw},${clickTarget.component},4`);
+            socket.send(`#DEVICE,${clickTarget.sw},${clickTarget.component},4`);
+          } else if (elem && elem.classList.contains('clicked')) {
             // For regular buttons, report the click event.
+            console.log(`#DEVICE,${sw},${component},3`);
+            console.log(`#DEVICE,${sw},${component},4`);
             socket.send(`#DEVICE,${sw},${component},3`);
             socket.send(`#DEVICE,${sw},${component},4`);
           }
           // Remove the CSS class, so that the button is no longer highlighted.
-          clickTarget.elem.classList.remove('clicked');
+          if (clickTarget && clickTarget.elem) {
+            clickTarget.elem.classList.remove('clicked');
+          }
           clickTarget = undefined;
         }
       }
 
-      function mouseenter(elem, sw, component) {
+      function mouseenter(event, elem, sw, component) {
         // Allow (un)cancelling a click by moving the mouse in/out of the
         // HTML element.
         if (clickTarget && elem === clickTarget.elem) {
@@ -225,7 +196,7 @@
         }
       }
 
-      function mouseleave(elem, sw, component) {
+      function mouseleave(event, elem, sw, component) {
         // Allow (un)cancelling a click by moving the mouse in/out of the
         // HTML element.
         if (clickTarget && elem === clickTarget.elem) {
@@ -244,12 +215,41 @@
             html = '';
             for (const keypad in xhr.response) {
               // Switches are simply DIV elements containing an unordered list
-              html += `<div class="switch" id="${keypad}"><ul>`;
               const k = xhr.response[keypad];
-              for (let button = 1; button <= 6; ++button) {
-                html += `<li>${k.buttons[button] || ''}</li>`;
+              const isPico = !Object.keys(k.leds).length;
+              html += `<div class="switch${
+                         isPico ? " pico" : ""}" id="${keypad}"><ul>`;
+              for (const button in k.buttons) {
+                const isOn = k.leds[button];
+                const isLower = typeof k.buttons[button] === "boolean" &&
+                                !k.buttons[button];
+                const isRaise = typeof k.buttons[button] === "boolean" &&
+                                k.buttons[button];
+                let cls = '';
+                if (isOn || isLower || isRaise || isPico) {
+                  cls = ' class="';
+                  if (isOn) {
+                    cls += 'on';
+                  } else if (isLower) {
+                    cls += 'dimmer lower noLED';
+                  } else if (isRaise) {
+                    cls += 'dimmer raise noLED';
+                  } else if (isPico) {
+                    cls += 'noLED';
+                  }
+                  cls += '"';
+                }
+                let content = '';
+                if (typeof k.buttons[button] === 'string') {
+                  content = k.buttons[button];
+                } else if (typeof k.buttons[button] === "boolean") {
+                  content = '<span>\u00A0';
+                  content += k.buttons[button] ? '\u21D1' : '\u21D3';
+                  content += '\u00A0</span>';
+                }
+                html += `<li${cls} id="${keypad}/${button}">${content}</li>`;
               }
-              html += '<li><span></span><span></span></li></ul></div>';
+              html += '</ul></div>';
             }
             // Set the new page contents and hook it up to Javascript
             document.body.innerHTML = html;

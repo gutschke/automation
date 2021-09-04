@@ -846,8 +846,15 @@ std::string RadioRA2::getKeypads() {
     str << "},\"buttons\":{";
     for (auto button = dev.components.begin(); button != dev.components.end();){
       const auto btn = button->second;
-      str << fmt::format("\"{}\":\"{}\"{}", btn.id, esc(btn.name),
-                         ++button != dev.components.end() ? "," : "");
+      str << fmt::format("\"{}\":", btn.id);
+      // Dimmer buttons are encoded as booleans to make them easy to
+      // identify. Other buttons are stored with their label.
+      if (btn.type == BUTTON_LOWER || btn.type == BUTTON_RAISE) {
+        str << (btn.type != BUTTON_LOWER ? "true" : "false");
+      } else {
+        str << fmt::format("\"{}\"", esc(btn.name));
+      }
+      str << (++button != dev.components.end() ? "," : "");
     }
     str << "}}";
   }

@@ -304,7 +304,8 @@ static void server() {
   // Create all the different objects that make up our server and connect
   // them to each other. Then enter the event loop.
   Event event;
-  dmxRemoteServer(event);
+  dmxRemoteServer(event); // For debugging purposes only
+
   DBG("Starting...");
   DMX dmx(
     event,
@@ -325,7 +326,9 @@ static void server() {
     "",
     site.contains("USER") ? site["USER"].get<std::string>() : "",
     site.contains("PASSWORD") ? site["PASSWORD"].get<std::string>() : "");
-  WS ws(&event, 8080, [&]() { return ra2.getKeypads(); });
+  WS ws(&event, 8080,
+        [&]() { return ra2.getKeypads(); },
+        [&](const std::string& s) { ra2.command(s); });
   event.loop();
 }
 
