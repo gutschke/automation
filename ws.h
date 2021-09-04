@@ -17,10 +17,6 @@ class WS {
   void broadcast(const std::string& s);
 
  private:
-  struct KeypadsState {
-    std::string data;
-  };
-
   Event *event_;
   std::function<const std::string ()> keypads_;
   std::function<void (const std::string&)> cmd_;

@@ -56,7 +56,7 @@ WS::WS(Event* event, int port, std::function<const std::string ()> keypads,
   protocols_[0].callback = lws_callback_http_dummy;
   protocols_[1].name = "keypads";
   protocols_[1].callback = keypadsCallback;
-  protocols_[1].per_session_data_size = sizeof(KeypadsState);
+  protocols_[1].per_session_data_size = sizeof(std::string);
   protocols_[2].name = "ws";
   protocols_[2].callback = websocketCallback;
   protocols_[2].per_session_data_size = sizeof(std::string *);
@@ -104,6 +104,11 @@ WS::~WS() {
   if (ctx_) {
     lws_context_destroy(ctx_);
   }
+  // "wsi_" should be empty now, but better safe than sorry.
+  for (auto& [ _, pending ] : wsi_) {
+    delete pending;
+  }
+  wsi_.clear();
   event_->removeLoop(loop_);
 }
 
@@ -165,44 +170,42 @@ int WS::close(lws *wsi) {
 int WS::keypadsCallback(lws *wsi, lws_callback_reasons reason,
                         void *user, void *in, size_t len) {
   WS *that = (WS *)lws_context_user(lws_get_context(wsi));
-  auto *session = (KeypadsState *)user;
+  auto *pending = (std::string *)user;
   uint8_t buf[LWS_PRE + 2048], *start = &buf[LWS_PRE], *ptr = start;
   uint8_t *end = &buf[sizeof(buf) - LWS_PRE - 1];
 
   switch (reason) {
-  case LWS_CALLBACK_PROTOCOL_INIT:
-    DBG("Keypads::LWS_CALLBACK_PROTOCOL_INIT");
-    break;
   case LWS_CALLBACK_HTTP_BIND_PROTOCOL:
+    // Each new HTTP pending keeps track of partial data that hasn't been
+    // sent yet.
     DBG("Keypads::LWS_CALLBACK_HTTP_BIND_PROTOCOL");
-    new (session) KeypadsState();
+    new (pending) std::string();
     break;
   case LWS_CALLBACK_HTTP:
     DBG("Keypads::LWS_CALLBACK_HTTP");
+    if (!pending) break;
+    if (that->keypads_) {
+      *pending = that->keypads_();
+    }
     if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK, "application/json",
-                                    LWS_ILLEGAL_HTTP_CONTENT_LEN, &ptr, end) ||
+                                    pending->size(), &ptr, end) ||
         lws_finalize_write_http_header(wsi, start, &ptr, end)) {
       return 1;
-    }
-    if (that->keypads_) {
-      session->data = that->keypads_();
     }
     lws_callback_on_writable(wsi);
     return 0;
   case LWS_CALLBACK_HTTP_WRITEABLE: {
     DBG("Keypads::LWS_CALLBACK_HTTP_WRITEABLE");
-    if (!session) {
-      break;
-    }
-    size_t n = std::min(session->data.size(), lws_ptr_diff_size_t(end, ptr));
+    if (!pending) break;
+    size_t n = std::min(pending->size(), lws_ptr_diff_size_t(end, ptr));
     const lws_write_protocol mode =
-      (n == session->data.size()) ? LWS_WRITE_HTTP_FINAL : LWS_WRITE_HTTP;
-    memcpy(ptr, session->data.data(), n);
+      (n == pending->size()) ? LWS_WRITE_HTTP_FINAL : LWS_WRITE_HTTP;
+    memcpy(ptr, pending->data(), n);
     ptr += n;
     if (lws_write(wsi, start, n, mode) != (ssize_t)n) {
       return 1;
     } else {
-      session->data.erase(0, n);
+      pending->erase(0, n);
     }
     if (mode == LWS_WRITE_HTTP_FINAL) {
       if (lws_http_transaction_completed(wsi)) {
@@ -215,19 +218,9 @@ int WS::keypadsCallback(lws *wsi, lws_callback_reasons reason,
   }
   case LWS_CALLBACK_HTTP_DROP_PROTOCOL:
     DBG("Keypads::LWS_CALLBACK_HTTP_DROP_PROTOCOL");
-    session->~KeypadsState();
-    break;
-  case LWS_CALLBACK_CLOSED_HTTP:
-    DBG("Keypads::LWS_CALLBACK_CLOSED_HTTP");
-    break;
-  case LWS_CALLBACK_CHECK_ACCESS_RIGHTS:
-//  DBG("Keypads::LWS_CALLBACK_CHECK_ACCESS_RIGHTS");
-    break;
-  case LWS_CALLBACK_EVENT_WAIT_CANCELLED:
-//  DBG("Keypads::LWS_CALLBACK_EVENT_WAIT_CANCELLED");
+    std::destroy_at(pending);
     break;
   default:
-    DBG("Keypads::Reason: " << reason);
     break;
   }
   return lws_callback_http_dummy(wsi, reason, user, in, len);
@@ -239,24 +232,14 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
   auto pending = user ? *(std::string **)user : nullptr;
 
   switch (reason) {
-  case LWS_CALLBACK_PROTOCOL_INIT:
-    DBG("WebSocket::LWS_CALLBACK_PROTOCOL_INIT");
-    break;
   case LWS_CALLBACK_PROTOCOL_DESTROY:
+    // Libwebsocket it shutting down, clean out all pending sessions, if any
+    // are still around.
     DBG("WebSocket::LWS_CALLBACK_PROTOCOL_DESTROY");
-    for (auto& [ wsi, pending ] : that->wsi_) {
+    for (auto& [ _, pending ] : that->wsi_) {
       delete pending;
     }
     that->wsi_.clear();
-    break;
-  case LWS_CALLBACK_HTTP_BIND_PROTOCOL:
-    DBG("WebSocket::LWS_CALLBACK_HTTP_BIND_PROTOCOL");
-    break;
-  case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION:
-    DBG("WebSocket::LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION");
-    break;
-  case LWS_CALLBACK_ADD_HEADERS:
-    DBG("WebSocket::LWS_CALLBACK_ADD_HEADERS");
     break;
   case LWS_CALLBACK_ESTABLISHED:
     DBG("WebSocket::LWS_CALLBACK_ESTABLISHED");
@@ -280,9 +263,9 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
     if (!pending || pending->size() <= LWS_PRE) {
       break;
     }
+    auto n = pending->size() - LWS_PRE;
     if (lws_write(wsi, (unsigned char *)&(*pending)[LWS_PRE],
-                  pending->size() - LWS_PRE, LWS_WRITE_TEXT)
-        < (ssize_t)(pending->size() - LWS_PRE)) {
+                  n, LWS_WRITE_TEXT) < (ssize_t)n) {
       return -1;
     }
     pending->erase(LWS_PRE);
@@ -295,17 +278,7 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
       that->cmd_(received);
     }
     break; }
-  case LWS_CALLBACK_WS_PEER_INITIATED_CLOSE:
-    DBG("WebSocket::LWS_CALLBACK_WS_PEER_INITIATED_CLOSE");
-    break;
-  case LWS_CALLBACK_WS_SERVER_DROP_PROTOCOL:
-    DBG("WebSocket::LWS_CALLBACK_WS_SERVER_DROP_PROTOCOL");
-    break;
-  case LWS_CALLBACK_EVENT_WAIT_CANCELLED:
-//  DBG("WebSocket::LWS_CALLBACK_EVENT_WAIT_CANCELLED");
-    break;
   default:
-    DBG("WebSocket::Reason: " << reason);
     break;
   }
   return 0;
