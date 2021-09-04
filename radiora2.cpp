@@ -86,7 +86,7 @@ void RadioRA2::healthCheck() {
         for (const auto& [ _, btn ] : dev.components) {
           if (btn.uncertain) {
             lutron_.command(fmt::format("#DEVICE,{},{},9,{}",
-              btn.id, btn.led, btn.ledState ? 1 : 0));
+                                        dev.id, btn.led, btn.ledState ? 1 : 0));
           }
         }
       }
