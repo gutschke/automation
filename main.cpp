@@ -330,7 +330,8 @@ static void server() {
     "",
     site.contains("USER") ? site["USER"].get<std::string>() : "",
     site.contains("PASSWORD") ? site["PASSWORD"].get<std::string>() : "");
-  WS ws_(&event, 8080,
+  WS ws_(&event,
+         site.contains("HTTP PORT") ? site["HTTP PORT"].get<int>() : 8080,
          [&]() { return ra2.getKeypads(); },
          [&](const std::string& s) { ra2.command(s); });
   ws = &ws_;

@@ -26,24 +26,27 @@ that can be used on labels.
 
 ## Getting started
 
-1. Use the Lutron software to add a new dimmer, but don't pair it with any
-   physical device. This is a virtual placeholder device that stands in for
-   your DMX fixture.
-2. Edit the "Zone Name" and append a ":" colon followed by the numeric DMX
-   id of your fixture. See "site.json.sample" for more advanced DMX-related
-   parameters.
-3. Assign the dimmer to one of your keypad buttons just as what you would
-   do with native Lutron devices.
-4. Upload the new configuration to the Lutron controller and disregard the
-   warning about the unassigned dimmer that you created.
-5. Create a "site.json" file that has the username and password for your
-   Lutron device, if you changed it from the default values.
-6. Start the "automation" binary. Initializing the connection with the Lutron
-   device can take up to about one minute.
-7. Your DMX fixture should now operate just like any native Lutron output
-   devices.
-8. Check "site.json.sample" for exmples of more advanced configuration options.
-9. If things don't work right away, refer to the next paragraph.
+1.  Use the Lutron software to add a new dimmer, but don't pair it with any
+    physical device. This is a virtual placeholder device that stands in for
+    your DMX fixture.
+2.  Edit the "Zone Name" and append a ":" colon followed by the numeric DMX
+    id of your fixture. See "site.json.sample" for more advanced DMX-related
+    parameters.
+3.  Assign the dimmer to one of your keypad buttons just as what you would
+    do with native Lutron devices.
+4.  Upload the new configuration to the Lutron controller and disregard the
+    warning about the unassigned dimmer that you created.
+5.  Create a "site.json" file that has the username and password for your
+    Lutron device, if you changed it from the default values.
+6.  Start the "automation" binary. Initializing the connection with the Lutron
+    device can take up to about one minute.
+7.  Your DMX fixture should now operate just like any native Lutron output
+    devices.
+8.  You can interact with your Lutron system by pointing your web browser to
+    a local server running on port 8080. Wrap a reverse proxy around this
+    server, if you need access control and/or SSL/TLS support.
+9.  Check "site.json.sample" for exmples of more advanced configuration options.
+10. If things don't work right away, refer to the next paragraph.
 
 ## Diagnostics
 

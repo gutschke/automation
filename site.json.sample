@@ -15,6 +15,7 @@
   // "USER": "lutron",
   // "PASSWORD": "integration",
   // "DMX SERIAL": "/dev/ttyUSB0",
+  // "HTTP PORT": 8080,
 
   "GPIO": {
     // Symbolic names for GPIO inputs and outputs. Inputs can be inverted
