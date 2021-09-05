@@ -10,7 +10,7 @@ class DMX {
  public:
   DMX(Event& event, const std::string& dev = "");
   ~DMX();
-  void set(int idx, int val);
+  void set(int idx, int val, bool fade = true);
 
  private:
   static const int FADE_TMO = 100;

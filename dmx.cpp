@@ -61,7 +61,7 @@ DMX::~DMX() {
   }
 }
 
-void DMX::set(int idx, int val) {
+void DMX::set(int idx, int val, bool fade) {
   // We should always send at least 24 light levels in a DMX package. This
   // minimum package size ensures that we don't exceed DMX timing parameters.
   val = std::min(std::max(0, val), 255);
@@ -73,7 +73,7 @@ void DMX::set(int idx, int val) {
   if (values_[idx] == val) {
     return;
   }
-  DBG("DMX::set(" << idx << ", " << val << ")");
+  DBG("DMX::set(" << idx << ", " << val << ", " << (fade?"true":"false") <<")");
 
   // Some DMX controllers don't like being turn all the way on without giving
   // them a little time to ramp up. Also, slowly fading the lights looks nicer.
@@ -81,12 +81,15 @@ void DMX::set(int idx, int val) {
   // slowly approach this number by adjusting the "phys_" setting.
   fadeTime_ = std::max(1, FADE_TMO*abs(values_[idx] - val)/255);
   values_[idx] = val;
+  if (!fade
 #if !defined(NDEBUG)
-  if (dmxsrv && !*dmxsrv) {
+      || (dmxsrv && !*dmxsrv)
+ #endif
+      ) {
     phys_[idx] = val;
-  } else
-#endif
-  adj_ = Util::millis()-5;
+  } else {
+    adj_ = Util::millis()-5;
+  }
 
   // If the same parameter was updated more than once without the data being
   // sent to the light fixture, force an immediate update. This helps with

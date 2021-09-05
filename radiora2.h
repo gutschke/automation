@@ -5,6 +5,7 @@
 #include <functional>
 #include <map>
 #include <pugixml.hpp>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -28,7 +29,8 @@ class RadioRA2 {
   RadioRA2(Event& event,
            std::function<void ()> init = nullptr,
            std::function<void (const std::string& line,
-                               const std::string& context)> input = nullptr,
+                               const std::string& context,
+                               bool fade)> input = nullptr,
            std::function<void (int, int, bool)> ledState = nullptr,
            std::function<void ()> hb = nullptr,
            std::function<void ()> schemaInvalid = nullptr,
@@ -36,7 +38,7 @@ class RadioRA2 {
            const std::string& username = "",
            const std::string& password = "");
   ~RadioRA2();
-  int addOutput(const std::string name, std::function<void (int)> cb);
+  int addOutput(const std::string name, std::function<void (int, bool)> cb);
   void addToButton(int kp, int bt, int id, int level, bool makeToggle = false);
   void toggleOutput(int out);
   DeviceType deviceType(int id) {
@@ -56,6 +58,8 @@ class RadioRA2 {
   const unsigned int ALIVE_INTERVAL   = 60000;
   const unsigned int ALIVE_CMD_TMO    =  5000;
   const unsigned int DIMLEVELS        =    15;
+  const unsigned int DIMRATE          =     2; // 20% change per second
+
 
   enum ActionType {
     ACTION_UNKNOWN        =  0,
@@ -204,7 +208,17 @@ class RadioRA2 {
     std::string              name;
     DeviceType               type;
     std::map<int, Component> components;
+
+    // Lutron does a great job with the dimmer buttons. It jumps brightness
+    // levels if the button is just tapped, and it smoothly fades the dimmers
+    // if the buttons held. Unfortunately, it doesn't do this job for us, even
+    // when using dummy devices. So, we need to go to some effort to replicate
+    // it.
     int                      lastButton;
+    int                      dimDirection;
+    int                      startOfDim;
+    bool                     isDimmingSmoothly;
+    std::map<int, int>       startingLevels;
   };
 
   struct Output {
@@ -231,11 +245,12 @@ class RadioRA2 {
   int getCurrentLevel(int id);
   void recomputeLEDs();
   void buttonPressed(Device& keypad, Component& button, bool isReleased);
+  void dimSmooth(Device& keypad);
 
   Event& event_;
   Lutron lutron_;
   bool initialized_;
-  std::function<void (const std::string&, const std::string&)> input_;
+  std::function<void (const std::string&, const std::string&, bool)> input_;
   std::function<void (int, int, bool)> ledState_;
   std::function<void ()> hb_;
   std::function<void ()> schemaInvalid_;
@@ -249,5 +264,6 @@ class RadioRA2 {
   std::map<int, Device> devices_;
   std::map<int, Output> outputs_;
   std::vector<std::tuple<std::string /* unique name */, int /* current level */,
-                         std::function<void (int)>>> namedOutput_;
+                         std::function<void (int, bool)>>> namedOutput_;
+  std::set<int> suppressDummyDimmer_;
 };

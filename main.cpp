@@ -24,7 +24,7 @@ using json = nlohmann::json;
 static int childFd[2] = { -1, -1 };
 
 
-static void setDMX(DMX& dmx, const json& dimmer, int level) {
+static void setDMX(DMX& dmx, const json& dimmer, int level, bool fade) {
   // Apply a dimmer curve and low trim level. Also, fade the color temperature.
   unsigned offset = !!(dimmer.size() > 0 && dimmer[0].is_number());
   const auto& ids = dimmer.size() > offset ? dimmer[offset] : "[]"_json;
@@ -38,12 +38,13 @@ static void setDMX(DMX& dmx, const json& dimmer, int level) {
                  ? curve[i].get<double>() : 1.0;
     double t = trim.is_number() ? trim.get<double>() : 0;
     int v = pow((level*(100.0-t)/100.0+t)/10000, exp)*255;
-    dmx.set(id, v);
+    dmx.set(id, v, fade);
   }
 }
 
 static void readLine(RadioRA2& ra2, DMX& dmx, Relay& relay,
-                     const std::string& line, const std::string& context) {
+                     const std::string& line, const std::string& context,
+                     bool fade) {
   DBG("readLine(\"" << line << "\", \"" << context << "\")");
   if (Util::starts_with(line, "~OUTPUT,")) {
     // When an output device changes levels, we expect a line of the form
@@ -71,7 +72,7 @@ static void readLine(RadioRA2& ra2, DMX& dmx, Relay& relay,
         }
         DBG("Found in-line DMX info");
         setDMX(dmx, json::parse("[" + context.substr(args) + "]"),
-               std::min(std::max(0, level), 10000));
+               std::min(std::max(0, level), 10000), fade);
       }
     }
   } else if (Util::starts_with(line, "~DEVICE,") &&
@@ -148,8 +149,8 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
       }
       ra2.addOutput(
         fmt::format("{}{}", RadioRA2::DMXALIAS, params[0].get<int>()),
-        [&dmx, params](int level) {
-          setDMX(dmx, params, level);
+        [&dmx, params](int level, bool fade) {
+          setDMX(dmx, params, level, fade);
         });
     }
   }
@@ -175,8 +176,8 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
               ra2.addToButton(
                 atoi(kp.c_str()), atoi(bt.c_str()),
                 ra2.addOutput(output,
-                  [&, dimmer = *params](int level) {
-                    setDMX(dmx, dimmer, level);
+                  [&, dimmer = *params](int level, bool fade) {
+                    setDMX(dmx, dimmer, level, fade);
                   }),
                 level.get<int>());
             }
@@ -193,7 +194,7 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
                 atoi(kp.c_str()), atoi(bt.c_str()),
                 ra2.addOutput(
                   fmt::format("{}{}", RadioRA2::ALIAS, out.get<int>()),
-                  [&, out](int level) {
+                  [&, out](int level, auto) {
                     ra2.command(fmt::format(
                       "#OUTPUT,{},1,{}.{:02}",
                       out.get<int>(), level/100, level%100));
@@ -207,7 +208,7 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
             ra2.addToButton(
               atoi(kp.c_str()), atoi(bt.c_str()),
               ra2.addOutput(fmt::format("DEV:{}/{}", otherKp, otherBt),
-                [&, otherKp, otherBt](auto) {
+                [&, otherKp, otherBt](auto, auto) {
                   ra2.command(fmt::format("#DEVICE,{},{},3",otherKp,otherBt));
                   ra2.command(fmt::format("#DEVICE,{},{},4",otherKp,otherBt));
                 }), 0);
@@ -252,7 +253,7 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
                 ra2.addOutput(fmt::format("RELAY:{}/{}",
                   condPin, actionPin->get<int>()),
                   [&, sense, condPin,
-                   actionPin = actionPin->get<int>()](auto) {
+                   actionPin = actionPin->get<int>()](auto, auto) {
                     if (condPin < 0 || relay.get(condPin) == sense) {
                       relay.toggle(actionPin);
                     }
@@ -315,8 +316,8 @@ static void server() {
   RadioRA2 ra2(
     event,
     [&]() { augmentConfig(site, ra2, dmx, relay); },
-    [&](const std::string& line, const std::string& context) {
-      readLine(ra2, dmx, relay, line, context); },
+    [&](const std::string& line, const std::string& context, bool fade) {
+      readLine(ra2, dmx, relay, line, context, fade); },
     [&](int kp, int led, bool state) {
       if (ws) ws->broadcast(fmt::format("{},{},{}", kp, led, (int)state));
     },

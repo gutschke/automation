@@ -99,7 +99,11 @@ void Lutron::command(const std::string& cmd,
       event_.removePollFd(sock_);
     }
   }
-  pending_[inCallback_].push_back(std::make_tuple(cmd, cb, err));
+  if (Util::starts_with(cmd, "?")) {
+    pending_[inCallback_].push_back(std::make_tuple(cmd, cb, err));
+  } else {
+    onPrompt_.push_back([cb]() { cb(""); });
+  }
   sendData(
     cmd + "\r\n",
     [this]() { readLine(); },
@@ -544,19 +548,20 @@ void Lutron::processLine(const std::string& line) {
     if (!inCallback_) {
       timeout_.clear();
     }
+    // Any previous commands that were waiting for a new command prompt are
+    // now done.
     const auto onPrompt = std::move(onPrompt_);
     for (const auto& completion : onPrompt) {
       event_.runLater(completion);
     }
     // If we are still in the process of executing a query command, but now
     // saw a prompt command instead, assume that there won't be a result code.
-    if (inCommand_ && pending_[inCallback_].size() &&
-        !Util::starts_with(std::get<0>(*pending_[inCallback_].begin()), "?")) {
+    while (inCommand_ && pending_[inCallback_].size()) {
       const auto cmd = *pending_[inCallback_].begin();
       pending_[inCallback_].erase(pending_[inCallback_].begin());
       event_.runLater([=, cb = std::get<1>(cmd)]() { cb(""); });
     }
-    inCommand_ = !!pending_[inCallback_].size();
+    inCommand_ = false;
     checkDelayed();
     readLine();
   } else if (pending_[inCallback_].size() &&
@@ -587,8 +592,10 @@ void Lutron::processLine(const std::string& line) {
     // one.
     for (auto it = pending_[inCallback_].begin();
          it != pending_[inCallback_].end();) {
-      if (Util::starts_with(line, "~" +
-         std::get<0>(*it).substr(1, std::get<0>(*it).find_last_of(',')-1))) {
+      const auto& pending = std::get<0>(*it);
+      if (pending.size() > 1 &&
+          Util::starts_with(line, "~" +
+                            pending.substr(1, pending.find_last_of(',')-1))) {
         if (!inCallback_) {
           timeout_.clear();
         }
