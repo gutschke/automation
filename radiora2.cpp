@@ -181,7 +181,7 @@ void RadioRA2::readLine(const std::string& line) {
         }
       }
     }
-    suppressed = suppressDummyDimmer_.contains(id);
+    suppressed = suppressDummyDimmer_.find(id) != suppressDummyDimmer_.end();
     if (!suppressed) {
       const auto& out = outputs_.find(id);
       if (out != outputs_.end() &&
