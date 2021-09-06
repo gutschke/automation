@@ -266,7 +266,9 @@ void RadioRA2::init(std::function<void (void)> cb) {
         // afterwards.
         const auto onInit = std::move(onInit_);
         for (const auto& o : onInit) {
-          event_.runLater(o);
+          if (o) {
+            event_.runLater(o);
+          }
         }
         if (cb) {
           cb();
@@ -305,7 +307,7 @@ void RadioRA2::closed() {
 
 void RadioRA2::getSchema(const sockaddr& addr, socklen_t len,
                          std::function<void ()> cb) {
-  if ((devices_.size() || outputs_.size()) && schemaInvalid_) {
+  if (cb && (devices_.size() || outputs_.size()) && schemaInvalid_) {
     // If we already have cached data, continue initialization speculatively
     // and restart the daemon if necessary.
     event_.runLater(cb);
@@ -644,9 +646,11 @@ void RadioRA2::recomputeLEDs() {
             continue;
           }
           empty = false;
-          if (component.logic == LED_MONITOR && level > 0) {
-            // LED is on when at least one device is at any level
-            ledState = true;
+          if (component.logic == LED_MONITOR) {
+            if (level > 0) {
+              // LED is on when at least one device is at any level
+              ledState = true;
+            }
           } else if (level != as.level) {
             // LED is on when all devices are at the exact programmed level
             ledState = false;
@@ -838,14 +842,13 @@ void RadioRA2::setDMXorLutron(int id, int level, bool fade, bool suppress,
   // reports after the button is released, as it almost certainly is
   // going to be in disagreement with the value that we determined.
   // We have to make sure not to invoke the "input_" callback nor
-  // update our own cached value in "outputs_[as.id].level".
+  // update our own cached value in "outputs_[id].level".
   // Instead, we queue our own command, which informs Lutron of the
-  // level that we would like it to have instead. Unfortunately, the
-  // asynchronous execution means we might or might not also filter out
-  // the return status from out own command. So, we have to additionally
-  // invoke the "input_" callback instead of relying on the usual
-  // callbacks to do so for us, when they saw that Lutron accepted the
-  // value.
+  // level that we would like it to have. Unfortunately, the asynchronous
+  // execution means we might or might not also filter out the return status
+  // from out own command. So, we have to additionally invoke the "input_"
+  // callback instead of relying on the usual callbacks to do so for us,
+  // when they saw that Lutron accepted the value.
   if (id < 0) {
     auto& out = namedOutput_[-id-1];
     if (out.level != level) {
