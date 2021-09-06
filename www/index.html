@@ -47,6 +47,10 @@
           overflow: hidden;
           border: 1px solid black;
       }
+      div.switch > ul > li,
+      div.switch > ul > li * {
+          touch-action: none;
+      }
       /* The last row has a special button that is split in half for DOWN and UP
        */
       div.switch > ul > li.dimmer {
@@ -127,17 +131,14 @@
             const elem      = li;
             const swid      = parseInt(sw.id);
             const component = parseInt(li.id.split('/')[1]);
-            li.onmousedown  = (e) => mousedown(e, elem, swid, component);
-            li.onmouseup    = (e) => mouseup(e, elem, swid, component);
-            li.onmouseenter = (e) => mouseenter(e, elem, swid, component);
-            li.onmouseleave = (e) => mouseleave(e, elem, swid, component);
-            li.ontouchstart = (e) => mousedown(e, elem, swid, component);
-            li.ontouchend   = (e) => mouseup(e, elem, swid, component);
+            li.onpointerdown  = (e) => mousedown(e, elem, swid, component);
+            li.onpointerup    = (e) => mouseup(e, elem, swid, component);
+            li.onpointerenter = (e) => mouseenter(e, elem, swid, component);
+            li.onpointerleave = (e) => mouseleave(e, elem, swid, component);
           }
         }
         // Make sure we always notice when the mouse button is released.
         document.getElementsByTagName('BODY')[0].onmouseup = (e) => mouseup(e);
-        document.getElementsByTagName('BODY')[0].touchup = (e) => mouseup(e);
       }
 
       var clickTarget;
