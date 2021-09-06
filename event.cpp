@@ -19,7 +19,9 @@ Event::~Event() {
     // process of shutting down.
     const auto later = std::move(later_);
     for (const auto& cb : later) {
-      cb();
+      if (cb) {
+        cb();
+      }
     }
   }
   // Ideally, the caller should ensure that there are no unresolved
@@ -84,7 +86,7 @@ void Event::loop() {
            rc > 0 && it != pollFds_.end(); it++, i++) {
         if (fds_[i].revents) {
           if (*it) {
-            if (!(*it)->cb(&fds_[i])) {
+            if ((*it)->cb && !(*it)->cb(&fds_[i])) {
               removePollFd(*it);
             }
           }
@@ -227,14 +229,18 @@ void Event::handleTimeouts(unsigned now) {
     while (!later_.empty()) {
       const auto later = std::move(later_);
       for (const auto& cb : later) {
-        cb();
+        if (cb) {
+          cb();
+        }
       }
     }
     for (const auto& timeout : timeouts_) {
       if (timeout && now >= timeout->tmo) {
         const auto cb = std::move(timeout->cb);
         removeTimeout(timeout);
-        cb();
+        if (cb) {
+          cb();
+        }
       }
     }
   } while (!later_.empty());
