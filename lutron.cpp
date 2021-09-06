@@ -134,7 +134,9 @@ void Lutron::closeSock() {
       // Other commands will execute once the connection is re-opened.
       const auto later = std::move(later_[inCallback_]);
       for (const auto& cmd : later) {
-        event_.runLater(cmd.err);
+        if (cmd.err) {
+          event_.runLater(cmd.err);
+        }
       }
     }
     // None of the already submitted commands will ever see their
@@ -144,7 +146,9 @@ void Lutron::closeSock() {
       const auto pending = std::move(pending_[inCallback]);
       for (auto it = pending.rbegin(); it != pending.rend(); ++it) {
         DBG("Failing pending command \"" << it->cmd << "\"");
-        event_.runLater(it->err);
+        if (it->err) {
+          event_.runLater(it->err);
+        }
       }
     }
     inCallback_ = false;
@@ -383,7 +387,9 @@ void Lutron::login(std::function<void (void)> cb,
     if (getaddrinfo(gateway.c_str(), "23", &hints, &result) || !result) {
       DBG("getaddrinfo() failed (\"" << gateway << "\")");
       closeSock();
-      event_.runLater(err);
+      if (err) {
+        event_.runLater(err);
+      }
       return;
     }
     dontfinalize_ = true;
@@ -575,7 +581,9 @@ void Lutron::processLine(const std::string& line) {
     // now done.
     const auto onPrompt = std::move(onPrompt_);
     for (const auto& completion : onPrompt) {
-      event_.runLater(completion);
+      if (completion) {
+        event_.runLater(completion);
+      }
     }
     // If we are still in the process of executing a query command, but now
     // saw a prompt command instead, assume that there won't be a result code.
