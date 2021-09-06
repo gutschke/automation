@@ -306,7 +306,7 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
 
 void WS::broadcast(const std::string& s) {
 // DBG("WebSocket::broadcast(\"" << s << "\")");
-  // Newly enqueued data must be send to all listening clients when they
+  // Newly enqueued data must be sent to all listening clients when they
   // become writable.
   for (auto& [ wsi, pending ] : wsi_) {
     if (pending->size() > LWS_PRE) {
