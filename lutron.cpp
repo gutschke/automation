@@ -67,7 +67,7 @@ void Lutron::command(const std::string& cmd,
   // command can be in-flight at any given time.
   if (!recurs) {
     if (commandPending()) {
-      later_[inCallback_].push_back(make_tuple(cmd, cb, err));
+      later_[inCallback_].push_back(Command{cmd, cb, err});
       return;
     } else {
       inCommand_ = true;
@@ -89,7 +89,9 @@ void Lutron::command(const std::string& cmd,
               setTmo();
             } else {
               closeSock();
-              err();
+              if (err) {
+                err();
+              }
             }
           });
         });
@@ -100,9 +102,11 @@ void Lutron::command(const std::string& cmd,
     }
   }
   if (Util::starts_with(cmd, "?")) {
-    pending_[inCallback_].push_back(std::make_tuple(cmd, cb, err));
+    pending_[inCallback_].push_back(Command{cmd, cb, err});
   } else {
-    onPrompt_.push_back([cb]() { cb(""); });
+    if (cb) {
+      onPrompt_.push_back([cb]() { cb(""); });
+    }
   }
   sendData(
     cmd + "\r\n",
@@ -130,7 +134,7 @@ void Lutron::closeSock() {
       // Other commands will execute once the connection is re-opened.
       const auto later = std::move(later_[inCallback_]);
       for (const auto& cmd : later) {
-        event_.runLater(std::get<2>(cmd));
+        event_.runLater(cmd.err);
       }
     }
     // None of the already submitted commands will ever see their
@@ -139,8 +143,8 @@ void Lutron::closeSock() {
     for (const auto& inCallback : { inCallback_, false }) {
       const auto pending = std::move(pending_[inCallback]);
       for (auto it = pending.rbegin(); it != pending.rend(); ++it) {
-        DBG("Failing pending command \"" << std::get<0>(*it) << "\"");
-        event_.runLater(std::get<2>(*it));
+        DBG("Failing pending command \"" << it->cmd << "\"");
+        event_.runLater(it->err);
       }
     }
     inCallback_ = false;
@@ -203,19 +207,16 @@ void Lutron::checkDelayed(std::function<void ()> next) {
   if (later_[inCallback_].size()) {
     const auto cmd = *later_[inCallback_].begin();
     later_[inCallback_].erase(later_[inCallback_].begin());
-    if (!std::get<0>(cmd).size()) {
+    if (!cmd.cmd.size()) {
       // Sometimes, we want to push a callback to the end of the queue, so
       // that it only ever gets executed after all other pending commands
       // have completed. This is done by pushing an empty command string.
-      std::get<1>(cmd)("");
+      cmd.cb("");
     } else {
       // Invoking the callback from Event::runLater() makes sure any global
       // state that our callers are about to modify will have settled.
-      event_.runLater([=, this,
-                       co = std::get<0>(cmd),
-                       cb = std::get<1>(cmd),
-                       er = std::get<2>(cmd)]() {
-        command(co, cb, er); });
+      event_.runLater([=, this]() {
+        command(cmd.cmd, cmd.cb, cmd.err); });
     }
   }
   if (next) {
@@ -223,9 +224,9 @@ void Lutron::checkDelayed(std::function<void ()> next) {
       // If there still is work to be done, don't invoke our callback
       // just yet.
       later_[inCallback_].push_back(
-        make_tuple(std::string(),
-                   [=](const std::string& line) { next(); },
-                   [](){}));
+        Command{std::string(),
+                [=](const std::string& line) { next(); },
+                (std::function<void ()>)nullptr});
     } else {
       // All delayed tasks have now completed.
       next();
@@ -240,7 +241,9 @@ void Lutron::waitForPrompt(const std::string& prompt,
                            std::string::size_type partial) {
   if (atPrompt_ && prompt == PROMPT) {
     // If we already are at the prompt, there is nothing else to do.
-    cb();
+    if (cb) {
+      cb();
+    }
     return;
   }
   // Set up a timeout that fires if we never see a prompt when we
@@ -250,24 +253,28 @@ void Lutron::waitForPrompt(const std::string& prompt,
     for (auto it = pending_[inCallback_].rbegin();
          it != pending_[inCallback_].rend();
          ++it) {
-      if (std::get<0>(*it) == prompt) {
+      if (it->cmd == prompt) {
         pending_[inCallback_].erase(std::next(it).base());
         break;
       }
     }
-    err(); });
+    if (err) { err(); } });
   // Remember the callback. It will be invoked when Lutron::processLine()
   // sees the prompt that we are waiting for.
-  pending_[inCallback_].push_back(make_tuple(
+  pending_[inCallback_].push_back(Command{
     prompt,
     [=, this](auto) {
       event_.removeTimeout(tmo);
-      cb();
+      if (cb) {
+        cb();
+      }
     }, [=, this]() {
       DBG("Failed to find prompt; removing timeout");
       event_.removeTimeout(tmo);
-      err();
-    }));
+      if (err) {
+        err();
+      }
+    }});
   // If the connection is not open yet, go ahead and establish a new
   // connection. This can optionally be suppressed to avoid infinite loops
   // (e.g. when the server isn't available at all).
@@ -294,11 +301,15 @@ void Lutron::sendData(const std::string& data,
     } else {
       if (data.empty()) {
         // If there is no data to write then we can return immediately.
-        cb();
+        if (cb) {
+          cb();
+        }
       } else {
         // Only write data once the socket is ready for writing.
         if (sock_ < 0) {
-          err();
+          if (err) {
+            err();
+          }
           return;
         }
         // We can be called from all sorts of different contexts. Some of these
@@ -315,13 +326,17 @@ void Lutron::sendData(const std::string& data,
             if (rc <= 0) {
               // Failed to write any data.
               closeSock();
-              err();
+              if (err) {
+                err();
+              }
             } else if (rc < (decltype(rc))data.size()) {
               // Incomplete write. Keep going.
               sendData(data.substr(rc), cb, err, "", false);
             } else {
               // All done. We have written all data.
-              cb();
+              if (cb) {
+                cb();
+              }
             }
             return true;
           });
@@ -344,14 +359,18 @@ void Lutron::login(std::function<void (void)> cb,
   // If connection is already established, continue using it until it
   // gets closed (e.g. because of an error condition).
   if (sock_ >= 0) {
-    cb();
+    if (cb) {
+      cb();
+    }
     return;
   }
   DBG("Lutron::login()");
   if (inCallback_) {
     // We are already in the process of handling a login(). Can't be
     // called recursively.
-    err();
+    if (err) {
+      err();
+    }
     return;
   }
   initStillWorking();
@@ -394,7 +413,7 @@ void Lutron::login(std::function<void (void)> cb,
               DBG("Finished initializing");
               inCallback_ = false;
               inCommand_ = oldCommand && isConnected_;
-              cb(); });}); },
+              if (cb) { cb(); } });}); },
         [=, this]() {
           // Pop only tmoHandler (already done), then try next address.
           DBG("Failed to enter password");
@@ -410,7 +429,9 @@ void Lutron::login(std::function<void (void)> cb,
         if (!rp) {
           DBG("No addresses found");
           timeout_.pop(freeaddrHandler);
-          err();
+          if (err) {
+            err();
+          }
           return;
         }
         // Create a non-blocking networking socket.
@@ -514,7 +535,9 @@ void Lutron::enterPassword(std::function<void (void)> cb,
     // Something is horribly wrong. We should never try to enter
     // credentials when we are already at the "GNET> " prompt.
     closeSock();
-    err();
+    if (err) {
+      err();
+    }
     return;
   }
   // Enter credentials when prompted, then wait for the normal
@@ -559,18 +582,22 @@ void Lutron::processLine(const std::string& line) {
     while (inCommand_ && pending_[inCallback_].size()) {
       const auto cmd = *pending_[inCallback_].begin();
       pending_[inCallback_].erase(pending_[inCallback_].begin());
-      event_.runLater([=, cb = std::get<1>(cmd)]() { cb(""); });
+      if (cmd.cb) {
+        event_.runLater([cb = cmd.cb]() { cb(""); });
+      }
     }
     inCommand_ = false;
     checkDelayed();
     readLine();
   } else if (pending_[inCallback_].size() &&
-             line == std::get<0>(*pending_[inCallback_].rbegin())) {
+             line == pending_[inCallback_].rbegin()->cmd) {
     // Other than the "GNET> " prompt, there also are "login: " and
     // "password: " prompts. They only require calling the callback.
-    const auto cb = std::get<1>(*pending_[inCallback_].rbegin());
+    const auto cb = pending_[inCallback_].rbegin()->cb;
     pending_[inCallback_].pop_back();
-    event_.runLater([=]() { cb(line); });
+    if (cb) {
+      event_.runLater([=]() { cb(line); });
+    }
   } else if (Util::starts_with(line, "~ERROR") ||
              line == "is an unknown command") {
     if (!inCallback_) {
@@ -582,8 +609,8 @@ void Lutron::processLine(const std::string& line) {
     if (inCommand_ && pending_[inCallback_].size()) {
       const auto cmd = *pending_[inCallback_].begin();
       pending_[inCallback_].erase(pending_[inCallback_].begin());
-      DBG("Found error message; command \"" << std::get<0>(cmd) << "\"");
-      onPrompt_.push_back(std::get<2>(cmd));
+      DBG("Found error message; command \"" << cmd.cmd << "\"");
+      onPrompt_.push_back(cmd.err);
     }
   } else if (Util::starts_with(line, "~")) {
     // Command starting with "~" character signal a status change. This could
@@ -592,14 +619,16 @@ void Lutron::processLine(const std::string& line) {
     // one.
     for (auto it = pending_[inCallback_].begin();
          it != pending_[inCallback_].end();) {
-      const auto& pending = std::get<0>(*it);
+      const auto& pending = it->cmd;
       if (pending.size() > 1 &&
           Util::starts_with(line, "~" +
                             pending.substr(1, pending.find_last_of(',')-1))) {
         if (!inCallback_) {
           timeout_.clear();
         }
-        onPrompt_.push_back([=, cb = std::get<1>(*it)]() { cb(line); });
+        if (it->cb) {
+          onPrompt_.push_back([cb = it->cb, line]() { cb(line); });
+        }
         it = pending_[inCallback_].erase(it);
         break;
       } else {
@@ -621,7 +650,7 @@ void Lutron::readLine() {
   // "password: " are also treated as prompts.
   const std::string user =
     pending_[inCallback_].size() ?
-    std::get<0>(*pending_[inCallback_].rbegin()) : "";
+    pending_[inCallback_].rbegin()->cmd : "";
   const std::string SEP("\r\n", 3);
   const auto skip = std::min(ahead_.size(), ahead_.find_first_not_of(SEP));
   const auto gnet = ahead_.find(PROMPT, skip);
@@ -738,7 +767,9 @@ void Lutron::Timeout::set(unsigned tmo, std::function<void (void)> cb) {
   // scopes.
   handle_ = event_.addTimeout(tmo, [=, this]() {
     clear();
-    cb();
+    if (cb) {
+      cb();
+    }
   });
 }
 

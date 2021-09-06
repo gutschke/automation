@@ -4,7 +4,6 @@
 
 #include <functional>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -23,10 +22,11 @@ class Lutron {
   ~Lutron();
   void command(const std::string& cmd,
                std::function<void (const std::string& res)> cb = [](auto){},
-               std::function<void (void)> err = [](){},
+               std::function<void (void)> err = nullptr,
                bool recurs = false);
-  void ping(std::function<void (void)> cb = [](){}) {
-    command("?SYSTEM,1", [=](auto) { cb(); }); }
+  void ping(std::function<void (void)> cb = nullptr) {
+    command("?SYSTEM,1", cb ? [=](auto) { cb(); }
+            : (std::function<void (const std::string&)>)nullptr); }
   void closeSock();
   bool getConnectedAddr(struct sockaddr& addr, socklen_t& len);
   bool isConnected() { return isConnected_; }
@@ -58,6 +58,12 @@ class Lutron {
   void pollIn(std::function<bool (pollfd *)> cb);
   void advanceKeepAliveMonitor();
 
+  struct Command {
+    std::string cmd;
+    std::function<void (const std::string&)> cb;
+    std::function<void ()> err;
+  };
+
   class Timeout {
   public:
     Timeout(Event& event) : event_(event), self_(0), handle_(0) { }
@@ -88,9 +94,7 @@ class Lutron {
   bool atPrompt_;
   std::string ahead_;
   void *keepAlive_;
-  std::vector<std::tuple<std::string,
-                         std::function<void (const std::string&)>,
-                         std::function<void ()>>> later_[2], pending_[2];
+  std::vector<Command> later_[2], pending_[2];
   std::vector<std::function<void ()>> onPrompt_;
   struct sockaddr_storage addr_;
   socklen_t addrLen_ = 0;

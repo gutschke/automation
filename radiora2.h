@@ -46,8 +46,8 @@ class RadioRA2 {
     return dev != devices_.end() ? dev->second.type : DEV_UNKNOWN;
   }
   void command(const std::string& cmd,
-               std::function<void (const std::string& res)> cb = [](auto){},
-               std::function<void (void)> err = [](){}) {
+               std::function<void (const std::string& res)> cb = nullptr,
+               std::function<void (void)> err = nullptr) {
     lutron_.command(cmd, cb, err);
   }
   std::string getKeypads();
@@ -57,8 +57,9 @@ class RadioRA2 {
   const unsigned int LONG_REOPEN_TMO  = 60000;
   const unsigned int ALIVE_INTERVAL   = 60000;
   const unsigned int ALIVE_CMD_TMO    =  5000;
+  const unsigned int DOUBLETAP        =   550;
   const unsigned int DIMLEVELS        =    15;
-  const unsigned int DIMRATE          =     2; // 20% change per second
+  const unsigned int DIMRATE          =    25; // 25% change per second
 
 
   enum ActionType {
@@ -152,8 +153,6 @@ class RadioRA2 {
   };
 
   struct Assignment {
-    Assignment(int id, int level)
-      : id(id), level(level) { }
     bool operator==(const Assignment& o) const {
       return id == o.id && level == o.level;
     }
@@ -199,7 +198,8 @@ class RadioRA2 {
   struct Device {
     Device() { }
     Device(int id, const std::string& name, DeviceType type)
-      : id(id), name(name), type(type), lastButton(-1) { }
+      : id(id), name(name), type(type), lastButton(-1), dimDirection(0),
+        startOfDim(0) { }
     bool operator==(const Device& o) const {
       return id == o.id && type == o.type && name == o.name &&
              components == o.components;
@@ -211,13 +211,15 @@ class RadioRA2 {
 
     // Lutron does a great job with the dimmer buttons. It jumps brightness
     // levels if the button is just tapped, and it smoothly fades the dimmers
-    // if the buttons held. Unfortunately, it doesn't do this job for us, even
-    // when using dummy devices. So, we need to go to some effort to replicate
-    // it.
+    // if the button is held. Unfortunately, it doesn't do this job for us, even
+    // when using dummy devices. Instead it just reports the final value when
+    // the button has been released. That's very jarring for the user. So, we
+    // need to go to some effort to replicate Lutron's native behavior for the
+    // integrated DMX devices.
     int                      lastButton;
     int                      dimDirection;
     int                      startOfDim;
-    bool                     isDimmingSmoothly;
+    int                      numTaps;
     std::map<int, int>       startingLevels;
   };
 
@@ -234,6 +236,12 @@ class RadioRA2 {
     int         level;
   };
 
+  struct NamedOutput {
+    std::string name;
+    int         level;
+    std::function<void (int, bool)> cb;
+  };
+
   void healthCheck();
   void readLine(const std::string& line);
   void init(std::function<void (void)> cb);
@@ -244,6 +252,8 @@ class RadioRA2 {
   void refreshCurrentState(std::function<void ()> cb);
   int getCurrentLevel(int id);
   void recomputeLEDs();
+  void setDMXorLutron(int id, int level, bool fade, bool suppress = false,
+                      bool noUpdate = false);
   void buttonPressed(Device& keypad, Component& button, bool isReleased);
   void dimSmooth(Device& keypad);
 
@@ -263,7 +273,6 @@ class RadioRA2 {
   int schemaSock_;
   std::map<int, Device> devices_;
   std::map<int, Output> outputs_;
-  std::vector<std::tuple<std::string /* unique name */, int /* current level */,
-                         std::function<void (int, bool)>>> namedOutput_;
+  std::vector<NamedOutput> namedOutput_;
   std::set<int> suppressDummyDimmer_;
 };

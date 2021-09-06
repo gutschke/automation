@@ -104,7 +104,7 @@ void RadioRA2::readLine(const std::string& line) {
     return;
   }
   DBG("Read line: \"" << line << "\"");
-  bool fade = true, suppressed = false;
+  bool suppressed = false;
   std::string context;
   // Received an update about a device. We are primarily interested in LEDs
   // and in light fixtures.
@@ -171,16 +171,9 @@ void RadioRA2::readLine(const std::string& line) {
     // Find keypad that matches the ${IntegrationID}.
     int id = (int)strtol(line.c_str() + 8, &endPtr, 10);
 
-    // Check if we are smoothly adjusting dimmers while the user holds the
-    // button. If so, we don't need the DMX driver to also fade the LEDs for us.
-    for (const auto& [ _, dev ] : devices_) {
-      if (dev.isDimmingSmoothly) {
-        if (dev.startingLevels.find(id) != dev.startingLevels.end()) {
-          fade = false;
-          break;
-        }
-      }
-    }
+    // While we are gradually fading DMX dimmers in response to the user
+    // holding down the dimmer button, we don't respond to Lutron updating
+    // this fixture. That would just result in needless flicker.
     suppressed = suppressDummyDimmer_.find(id) != suppressDummyDimmer_.end();
     if (!suppressed) {
       const auto& out = outputs_.find(id);
@@ -197,7 +190,7 @@ void RadioRA2::readLine(const std::string& line) {
         const std::string& dmxalias = fmt::format("{}{}", DMXALIAS, id);
         for (auto& [name, level, cb] : namedOutput_) {
           if (name == alias || name == dmxalias) {
-            if (level != out->second.level) {
+            if (level != out->second.level && cb) {
               event_.runLater([=]() { cb(out->second.level, true); });
             }
             level = out->second.level;
@@ -215,7 +208,7 @@ void RadioRA2::readLine(const std::string& line) {
     });
   }
   if (input_ && !suppressed) {
-    input_(line, Util::trim(context), fade);
+    input_(line, Util::trim(context), true);
   }
 }
 
@@ -225,7 +218,9 @@ void RadioRA2::init(std::function<void (void)> cb) {
   // close it down properly (if not already done) and notify our caller.
   if (!lutron_.isConnected()) {
     lutron_.closeSock();
-    cb();
+    if (cb) {
+      cb();
+    }
     return;
   }
 
@@ -536,8 +531,8 @@ bool RadioRA2::extractSchemaInfo(pugi::xml_document& xml) {
         component.node().select_nodes(".//PresetAssignment");
       for (const auto& assign : assignments) {
         // Convert dimmer level to our internal representation.
-        Assignment as(atoi(assign.node().child_value("IntegrationID")),
-                      strToLevel(assign.node().child_value("Level")));
+        Assignment as{atoi(assign.node().child_value("IntegrationID")),
+                      strToLevel(assign.node().child_value("Level"))};
         comp.assignments.push_back(as);
       }
       dev.components[comp.id] = comp;
@@ -583,7 +578,9 @@ void RadioRA2::refreshCurrentState(std::function<void ()> cb) {
   // Speculatively initialize things as fast as we can, and then fix things
   // up asynchronously as needed.
   command("", [cb, this](auto) {
-    cb();
+    if (cb) {
+      cb();
+    }
     event_.addTimeout(2000, [this]() {
       for (auto& dev : devices_) {
         for (auto& comp : dev.second.components) {
@@ -619,7 +616,7 @@ int RadioRA2::getCurrentLevel(int id) {
   // numbers refer to the Lutron integration id. Negative numbers are our
   // own virtual outputs which can map to DMX dimmers or GPIO output devices.
   if (id < 0 && -id <= (int)namedOutput_.size()) {
-    return std::min(std::max(std::get<1>(namedOutput_[-id-1]), 0), 10000);
+    return std::min(std::max(namedOutput_[-id-1].level, 0), 10000);
   } else {
     const auto& out = outputs_.find(id);
     if (out != outputs_.end()) {
@@ -685,9 +682,9 @@ int RadioRA2::addOutput(const std::string name,
   // from Lutron integration ids.
   int id;
   const auto& it = std::find_if(namedOutput_.begin(), namedOutput_.end(),
-                         [&](const auto &n) { return std::get<0>(n) == name; });
+                                [&](const auto &n) { return n.name == name; });
   if (it == namedOutput_.end()) {
-    namedOutput_.push_back(make_tuple(name, 0, cb));
+    namedOutput_.push_back(NamedOutput{name, 0, cb});
     id = -namedOutput_.size();
   } else {
     id = -(it - namedOutput_.begin() + 1);
@@ -725,7 +722,7 @@ void RadioRA2::addToButton(int kp, int bt, int id, int level, bool makeToggle) {
       devices_[kp].components[bt].type = BUTTON_TOGGLE;
     }
   }
-  devices_[kp].components[bt].assignments.push_back(Assignment(id, level*100));
+  devices_[kp].components[bt].assignments.push_back(Assignment{id, level*100});
 }
 
 void RadioRA2::toggleOutput(int out) {
@@ -826,6 +823,57 @@ std::string RadioRA2::getKeypads() {
   return str.str();
 }
 
+void RadioRA2::setDMXorLutron(int id, int level, bool fade, bool suppress,
+                              bool noUpdate) {
+  // Things get a little tricky when adjusting ouput levels in response
+  // to the user pushing the dimmer buttons, as Lutron will tell us it wants
+  // to set the wrong value. After all, the physical keypad still
+  // controls the dummy device, and Lutron sets its final value when
+  // the user releases the dimmer button. This would all be fine, if it also
+  // smoothly progressed through brightness values and reported those
+  // to us. But the Lutron controller does not do this for DMX loads
+  // when using the integration API; requiring us to do all the heavy
+  // lifting ourselves.
+  // This also means, we need to suppress the bogus updates that Lutron
+  // reports after the button is released, as it almost certainly is
+  // going to be in disagreement with the value that we determined.
+  // We have to make sure not to invoke the "input_" callback nor
+  // update our own cached value in "outputs_[as.id].level".
+  // Instead, we queue our own command, which informs Lutron of the
+  // level that we would like it to have instead. Unfortunately, the
+  // asynchronous execution means we might or might not also filter out
+  // the return status from out own command. So, we have to additionally
+  // invoke the "input_" callback instead of relying on the usual
+  // callbacks to do so for us, when they saw that Lutron accepted the
+  // value.
+  if (id < 0) {
+    auto& out = namedOutput_[-id-1];
+    if (out.level != level) {
+      out.level = level;
+      out.cb(level, fade);
+    }
+  } else {
+    auto& out = outputs_[id];
+    if (suppress) {
+      suppressDummyDimmer_.insert(id);
+    }
+    if (!noUpdate) {
+      command(fmt::format("#OUTPUT,{},1,{}.{:02}",
+                          id, level/100, level%100),
+              suppress ? [this, id](auto) { suppressDummyDimmer_.erase(id); }
+                       : (std::function<void (const std::string&)>)nullptr);
+    }
+    if (out.level != level) {
+      out.level = level;
+      if (input_) {
+        input_(fmt::format("~OUTPUT,{},1,{}.{:02}",
+                           id, level/100, level%100),
+               Util::trim(out.name), fade);
+      }
+    }
+  }
+}
+
 void RadioRA2::buttonPressed(Device& keypad, Component& button,
                              bool isReleased) {
   // Replicate the same logic that Lutron does for button presses, but
@@ -844,8 +892,7 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
     }
     for (const auto& as : button.assignments) {
       if (as.id < 0) {
-        std::get<1>(namedOutput_[-as.id-1]) = on ? 0 : as.level;
-        std::get<2>(namedOutput_[-as.id-1])(on ? 0 : as.level, true);
+        setDMXorLutron(as.id, as.level, true);
       }
     }
     break; }
@@ -858,51 +905,75 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
     }
     for (const auto& as : button.assignments) {
       if (as.id < 0) {
-        std::get<1>(namedOutput_[-as.id-1]) = as.level;
-        std::get<2>(namedOutput_[-as.id-1])(as.level, true);
+        setDMXorLutron(as.id, as.level, true);
       }
     }
     break;
 
   // Dimmer control buttons
   case BUTTON_LOWER:
-  case BUTTON_RAISE:
+  case BUTTON_RAISE: {
+    auto now = Util::millis();
     if (isReleased) {
-      keypad.dimDirection      =  0;
-      keypad.startOfDim        = -1;
-      keypad.isDimmingSmoothly = false;
-      keypad.startingLevels.clear();
+      // Handle double taps by jumping the dimmer to the most extreme values
+      // (i.e. fully on or off). But ignore triple taps or more. That would
+      // happen if the user is rapidly pushing the button to step through
+      // multiple discrete intervals because they don't like smooth adjustments.
+      // In those situations we don't want to confuse them by jumping all the
+      // way.
+      if (keypad.numTaps == 2 && now - keypad.startOfDim < 3*DOUBLETAP/2) {
+        int level = keypad.dimDirection > 0 ? 10000 : 0;
+        event_.addTimeout(std::min(0u, keypad.startOfDim + DOUBLETAP - now),
+        [=, this, &keypad]() {
+          if (keypad.numTaps == 2) {
+            keypad.numTaps = 0;
+            for (const auto& as :
+                   keypad.components[keypad.lastButton].assignments) {
+              setDMXorLutron(as.id, level, false);
+            }
+          }
+        });
+      }
+
       // If using dummy output devicess, both Lutron and us will try to adjust
       // the dimmer. Avoid flashing, by forcing the final value to the one that
       // we picked.
       for (const auto& as : keypad.components[keypad.lastButton].assignments) {
-        if (outputs_[as.id].name.find(':') != std::string::npos) {
-          // Things get a little tricky here, as Lutron will tell us about
-          // having set the wrong value. After all, the keypad controls the
-          // dummy device. Lutron still sets it's final value, but it doesn't
-          // generate intermediate values; requiring us to do all the heavy
-          // lifting.
-          // So, we need to suppress the bogus updates that Lutron reports
-          // when the button is released and not invoke the "input_" callback
-          // nor update our own cached value in "outputs_->level".
-          // Instead, we queue our own command, which informs Lutron of the
-          // level that we would like it to have. Unfortunately, the
-          // asynchronous execution means we might or might not also filter out
-          // the return status from out own command. So, we have to manually
-          // invoke the "input_" callback.
-          suppressDummyDimmer_.insert(as.id);
-          if (input_) {
-            input_(fmt::format("~OUTPUT,{},1,{}.{:02}", as.id,
-                               outputs_[as.id].level/100,
-                               outputs_[as.id].level%100),
-                   Util::trim(outputs_[as.id].name), true);
-          }
-          command(fmt::format("#OUTPUT,{},1,{}.{:02}", as.id,
-                              outputs_[as.id].level/100,
-                              outputs_[as.id].level%100),
-                  [this, id = as.id](auto) { suppressDummyDimmer_.erase(id); });
+        // The final dimmer level might need adjustment. If the user only
+        // pressed the button for a short amount of time, jump a full increment.
+        int level;
+        if (as.id < 0) {
+          // DMX dimmer configured in "site.json".
+          level = namedOutput_[-as.id-1].level;
+        } else if (outputs_[as.id].name.find(':') != std::string::npos) {
+          // DMX dimmer defined inline in the name of a Lutron "dummy" device.
+          level = outputs_[as.id].level;
+          suppressDummyDimmer_.erase(as.id);
+        } else {
+          // This dimmer is controlled by Lutron, leave it alone.
+          continue;
         }
+
+        // If we no longer remember the starting brightness, that means that
+        // dimSmooth() ran into the maximum value. No need to do any additional
+        // step to a full increment. We're already there.
+        auto it = keypad.startingLevels.find(as.id);
+        if (it != keypad.startingLevels.end()) {
+          // Snap to a discrete dim level, either up or down.
+          if (keypad.dimDirection < 0) {
+            level = std::min(level,
+                 (int)(((DIMLEVELS*it->second+5000)/10000-1)*10000/DIMLEVELS));
+          } else {
+            level = std::max(level,
+                 (int)(((DIMLEVELS*it->second+5000)/10000+1)*10000/DIMLEVELS));
+          }
+        }
+        level = std::min(10000, std::max(0, level));
+        setDMXorLutron(as.id, level, true, true, false);
       }
+      keypad.dimDirection = 0;
+      keypad.startOfDim = now;
+      keypad.startingLevels.clear();
     } else {
       if (keypad.lastButton < 0 ||
           keypad.components.find(keypad.lastButton) == keypad.components.end()){
@@ -910,15 +981,24 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
         return;
       }
       keypad.dimDirection = button.type == BUTTON_LOWER ? -1 : 1;
-      keypad.startOfDim = Util::millis();
-      keypad.isDimmingSmoothly = false;
       keypad.startingLevels.clear();
-      for (const auto& as : keypad.components[keypad.lastButton].assignments) {
+
+      // We want to disambiguate double taps from a stream of multiple taps.
+      // If we are seeing the latter, just keep counting and don't reset to
+      // single tap mode.
+      if (keypad.startOfDim && (now - keypad.startOfDim <= DOUBLETAP ||
+          (keypad.numTaps >= 2 && now - keypad.startOfDim < 5000))) {
+        keypad.numTaps++;
+      } else {
+        keypad.numTaps = 1;
+      }
+      keypad.startOfDim = now;
+      for (const auto& as : keypad.components[keypad.lastButton].assignments){
         // Both DMX outputs defined in "site.json" and defined inline with a
         // dummy device must be manually adjusted while the dimmer button is
         // being held.
         if (as.id < 0) {
-          keypad.startingLevels[as.id] = std::get<1>(namedOutput_[-as.id-1]);
+          keypad.startingLevels[as.id] = namedOutput_[-as.id-1].level;
         } else if (outputs_[as.id].name.find(':') != std::string::npos) {
           keypad.startingLevels[as.id] = outputs_[as.id].level;
         }
@@ -927,7 +1007,7 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
         command("", [&](auto) { dimSmooth(keypad); });
       }
     }
-    break;
+    break; }
 
   // There are other button types that we don't support.
   default:
@@ -938,47 +1018,25 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
 
 void RadioRA2::dimSmooth(Device& keypad) {
 //DBG("RadioRA2::dimSmooth()");
-  if (keypad.startOfDim < 0 || keypad.startingLevels.size() <= 0) {
+  if (!keypad.dimDirection || keypad.startingLevels.size() <= 0) {
     return;
   }
   int delta = ((int)Util::millis() - keypad.startOfDim)*
-               (int)DIMRATE*keypad.dimDirection;
+               (int)DIMRATE/10*keypad.dimDirection;
   for (auto it = keypad.startingLevels.begin();
        it != keypad.startingLevels.end();) {
+    // Step each fixtures brightness level by delta and update both our
+    // internal cached value and the DMX setting.
     const auto& id = it->first;
-    const auto& startingLevel = it->second;
-    int level;
-    // At the very least, step a minimum increment. But then keep smoothely
-    // adjusting dimmer while the button is held down.
-    if (keypad.dimDirection < 0) {
-      level = std::min(startingLevel + delta,
-               (int)(((DIMLEVELS*startingLevel+5000)/10000-1)*10000/DIMLEVELS));
-    } else {
-      level = std::max(startingLevel + delta,
-               (int)(((DIMLEVELS*startingLevel+5000)/10000+1)*10000/DIMLEVELS));
-    }
-    // If we are actively moving the dimming level in a smooth fashion, we
-    // don't want the DMX backend to do the same thing for us. But if we are
-    // jumping for the first minimal increment, smooth adjustments are nicer.
-    keypad.isDimmingSmoothly |= level == startingLevel + delta;
-    level = std::min(10000, std::max(0, level));
-    if (id < 0) {
-      if (level != std::get<1>(namedOutput_[-id-1])) {
-        std::get<1>(namedOutput_[-id-1]) = level;
-        std::get<2>(namedOutput_[-id-1])(level, false);
-      }
-    } else {
-      if (level != outputs_[id].level) {
-        outputs_[id].level = level;
-        command(fmt::format("#OUTPUT,{},1,{}.{:02}", id, level/100, level%100));
-      }
-    }
+    const int level = std::min(10000, std::max(0, it->second + delta));
+    setDMXorLutron(id, level, false, true, true);
+
+    // If we hit the maximum position, stop adjusting the DMX fixture.
     if (level == 0 || level == 10000) {
       it = keypad.startingLevels.erase(it);
     } else {
       ++it;
     }
   }
-  event_.addTimeout(50, [&]() {
-    command("", [&](auto) { dimSmooth(keypad); }); });
+  event_.addTimeout(50, [&]() { dimSmooth(keypad); });
 }
