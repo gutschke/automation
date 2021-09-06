@@ -208,7 +208,7 @@ void Lutron::checkDelayed(std::function<void ()> next) {
   // There are two separate queues. Commands that were scheduled from the
   // "init_" callback can only execute right after the connection has been
   // opened.
-  if (later_[inCallback_].size()) {
+  while (later_[inCallback_].size()) {
     const auto cmd = *later_[inCallback_].begin();
     later_[inCallback_].erase(later_[inCallback_].begin());
     if (!cmd.cmd.size()) {
@@ -216,11 +216,15 @@ void Lutron::checkDelayed(std::function<void ()> next) {
       // that it only ever gets executed after all other pending commands
       // have completed. This is done by pushing an empty command string.
       cmd.cb("");
+      if (inCommand_) {
+        break;
+      }
     } else {
       // Invoking the callback from Event::runLater() makes sure any global
       // state that our callers are about to modify will have settled.
       event_.runLater([=, this]() {
         command(cmd.cmd, cmd.cb, cmd.err); });
+      break;
     }
   }
   if (next) {
