@@ -303,15 +303,17 @@ static void server() {
   // to augment the information that we retrieve from the Lutron controller.
   json site("{}"_json);
   const std::string& fname = "site.json";
-  std::ifstream ifs(fname);
-  if ((ifs.rdstate() & std::ifstream::failbit) != 0) {
-    DBG("Failed to read \"" << fname << "\"");
-  } else {
-    json cfg = json::parse(ifs, nullptr, false, true);
-    if (cfg.is_discarded()) {
-      DBG("Failed to parse \"" << fname << "\"");
+  {
+    std::ifstream ifs(fname);
+    if ((ifs.rdstate() & std::ifstream::failbit) != 0) {
+      DBG("Failed to read \"" << fname << "\"");
     } else {
-      site = std::move(cfg);
+      json cfg = json::parse(ifs, nullptr, false, true);
+      if (cfg.is_discarded()) {
+        DBG("Failed to parse \"" << fname << "\"");
+      } else {
+        site = std::move(cfg);
+      }
     }
   }
 
