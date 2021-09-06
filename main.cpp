@@ -7,6 +7,7 @@
 #include <fmt/format.h>
 #include <fstream>
 #include <iomanip>
+#include <set>
 
 #include "json.hpp"
 using json = nlohmann::json;
@@ -22,10 +23,18 @@ using json = nlohmann::json;
 // Monitor the health of our process by sending regular heart beats. If the
 // heartbeats stop, kill the child process and restart it from the parent.
 static int childFd[2] = { -1, -1 };
+static bool initialized = false;
 
 
 static void setDMX(DMX& dmx, const json& dimmer, int level, bool fade) {
   // Apply a dimmer curve and low trim level. Also, fade the color temperature.
+  static std::map<int, int> early;
+  if (initialized && !early.empty()) {
+    for (const auto& [id, v] : early) {
+      dmx.set(id, v, false);
+    }
+    early.clear();
+  }
   unsigned offset = !!(dimmer.size() > 0 && dimmer[0].is_number());
   const auto& ids = dimmer.size() > offset ? dimmer[offset] : "[]"_json;
   const auto& curve = dimmer.size() > offset+1 ? dimmer[offset+1] : "[]"_json;
@@ -38,7 +47,11 @@ static void setDMX(DMX& dmx, const json& dimmer, int level, bool fade) {
                  ? curve[i].get<double>() : 1.0;
     double t = trim.is_number() ? trim.get<double>() : 0;
     int v = pow((level*(100.0-t)/100.0+t)/10000, exp)*255;
-    dmx.set(id, v, fade);
+    if (initialized) {
+      dmx.set(id, v, fade);
+    } else {
+      early[id] = v;
+    }
   }
 }
 
@@ -315,7 +328,7 @@ static void server() {
   WS *ws = nullptr;
   RadioRA2 ra2(
     event,
-    [&]() { augmentConfig(site, ra2, dmx, relay); },
+    [&]() { augmentConfig(site, ra2, dmx, relay); initialized = true; },
     [&](const std::string& line, const std::string& context, bool fade) {
       readLine(ra2, dmx, relay, line, context, fade); },
     [&](int kp, int led, bool state) {
