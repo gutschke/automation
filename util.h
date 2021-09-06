@@ -8,8 +8,13 @@
 #if defined(NDEBUG)
 #define DBG(x) do { } while (0)
 #else
+#include <fmt/format.h>
 #include <iostream>
-#define DBG(x) do { std::cerr << x << std::endl; } while (0)
+#define DBG(x) do { \
+    unsigned ts = Util::dt(); \
+    std::cerr << fmt::format("{:3}.{:03}: ", ts/1000, ts%1000) <<  x \
+              << std::endl; \
+  } while (0)
 #endif
 
 
@@ -33,6 +38,14 @@ namespace Util {
   inline bool ends_with(const std::string& s, const std::string& ends) {
     return ends.size() <= s.size() &&
            std::equal(ends.rbegin(), ends.rend(), s.rbegin());
+  }
+
+  inline unsigned dt() {
+    static unsigned last = millis();
+    unsigned now = millis();
+    unsigned delta = now - last;
+    last = now;
+    return delta;
   }
 
   template <class F>
