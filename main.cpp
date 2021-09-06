@@ -388,7 +388,7 @@ int main(int argc, char *argv[]) {
       // and process termination (resulting in an EOF condition on the pipe).
       for (;;) {
         event.removePollFd(childFd[0]);
-        event.addPollFd(childFd[0], POLLIN, [&]() {
+        event.addPollFd(childFd[0], POLLIN, [&](auto) {
           char ch = 0;
           ssize_t i = read(childFd[0], &ch, 1);
           if (i == 1 || (i < 0 && (errno == EAGAIN || errno == EINTR))) {
