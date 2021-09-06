@@ -196,16 +196,20 @@ int WS::keypadsCallback(lws *wsi, lws_callback_reasons reason,
     const char *contentType;
     ssize_t l = strlen((char *)in);
     ssize_t n = lws_hdr_copy(wsi, (char*)buf, sizeof(buf), WSI_TOKEN_GET_URI)-l;
+    const char* err = "<hmtl><head><title>Error</title></head><body>"
+                      "<h1>Error</h1></body></html>";
     if (n == sizeof(errURI)-1 && !memcmp(errURI, buf, n)) {
       status = HTTP_STATUS_NOT_FOUND;
       contentType = "text/html";
-      *pending =
-        "<hmtl><head><title>Error</title></head><body>"
-        "<h1>Error</h1></body></html>";
+      *pending = err;
     } else if (that->keypads_) {
       status = HTTP_STATUS_OK;
       contentType = "application/json";
       *pending = that->keypads_();
+    } else {
+      status = HTTP_STATUS_INTERNAL_SERVER_ERROR;
+      contentType = "text/html";
+      *pending = err;
     }
     if (lws_add_http_common_headers(wsi, status, contentType,
                                     pending->size(), &ptr, end) ||
