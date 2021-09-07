@@ -1064,7 +1064,7 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
       // We want to disambiguate double taps from a stream of multiple taps.
       // If we are seeing the latter, just keep counting and don't reset to
       // single tap mode.
-      if (now - keypad.startOfDim <= 5000) {
+      if (keypad.startOfDim && now - keypad.startOfDim <= 5000) {
         keypad.numTaps++;
       } else {
         keypad.numTaps = 1;
@@ -1078,14 +1078,13 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
         // Both DMX outputs defined in "site.json" and defined inline with a
         // dummy device must be manually adjusted while the dimmer button is
         // being held.
-        if (as.id < 0) {
-          if (namedOutput_[-as.id-1].level) {
+        if (as.level) {
+          if (as.id < 0) {
             keypad.startingLevels[as.id] = namedOutput_[-as.id-1].level;
+          } else if (outputs_[as.id].name.find(':') != std::string::npos) {
+            keypad.startingLevels[as.id] = outputs_[as.id].level;
+            suppressLutronDimmer(as.id, true);
           }
-        } else if (outputs_[as.id].name.find(':') != std::string::npos &&
-                   outputs_[as.id].level) {
-          keypad.startingLevels[as.id] = outputs_[as.id].level;
-          suppressLutronDimmer(as.id, true);
         }
       }
       if (keypad.startingLevels.size()) {
