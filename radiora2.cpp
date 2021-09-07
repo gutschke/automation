@@ -179,21 +179,32 @@ void RadioRA2::readLine(const std::string& line) {
       const auto& out = outputs_.find(id);
       if (out != outputs_.end() &&
           *endPtr++ == ',' && *endPtr++ == '1' && *endPtr++ == ',') {
-        // Update our internal state.
-        out->second.level = strToLevel(endPtr);
-        context = out->second.name;
+        const auto newLevel = strToLevel(endPtr);
+        const auto it = releaseDummyDimmer_.find(id);
+        if (it != releaseDummyDimmer_.end() && Util::millis() < it->second &&
+            out->second.level != newLevel) {
+          // Looks as if Lutron wants to override the value that we just set
+          // for the dimmer moments earlier. Fix that now.
+          command(fmt::format("#OUTPUT,{},1,{}.{:02}", id,
+                              out->second.level/100, out->second.level%100));
+          suppressed = true;
+        } else {
+          // Update our internal state.
+          out->second.level = newLevel;
+          context = out->second.name;
 
-        // Check if there is any aliased output. This allows us to take over
-        // the implementation of an output that is *also* natively handled by
-        // the Lutron controller.
-        const std::string& alias = fmt::format("{}{}", ALIAS, id);
-        const std::string& dmxalias = fmt::format("{}{}", DMXALIAS, id);
-        for (auto& [name, level, cb] : namedOutput_) {
-          if (name == alias || name == dmxalias) {
-            if (level != out->second.level && cb) {
-              event_.runLater([=]() { cb(out->second.level, true); });
+          // Check if there is any aliased output. This allows us to take over
+          // the implementation of an output that is *also* natively handled by
+          // the Lutron controller.
+          const std::string& alias = fmt::format("{}{}", ALIAS, id);
+          const std::string& dmxalias = fmt::format("{}{}", DMXALIAS, id);
+          for (auto& [name, level, cb] : namedOutput_) {
+            if (name == alias || name == dmxalias) {
+              if (level != out->second.level && cb) {
+                event_.runLater([=]() { cb(out->second.level, true); });
+              }
+              level = out->second.level;
             }
-            level = out->second.level;
           }
         }
       }
@@ -827,6 +838,22 @@ std::string RadioRA2::getKeypads() {
   return str.str();
 }
 
+void RadioRA2::suppressLutronDimmer(int id, bool mode) {
+  // Lutron eventually responds to dimmer button presses by sending a new
+  // value for the dimmer, even if this is a dummy device for our DMX
+  // fixture and dimming is fully managed by us. We carefully manage when
+  // we expect these events to show up and suppress them. But if there is
+  // a rapid sequence of events, Lutron can fall behind and send it's
+  // update delayed. When that happens, we need to make sure we ignore
+  // for a little longer.
+  if (mode) {
+    suppressDummyDimmer_.insert(id);
+  } else {
+    suppressDummyDimmer_.erase(id);
+    releaseDummyDimmer_[id] = Util::millis() + 200;
+  }
+}
+
 void RadioRA2::setDMXorLutron(int id, int level, bool fade, bool suppress,
                               bool noUpdate) {
   // Things get a little tricky when adjusting ouput levels in response
@@ -858,12 +885,15 @@ void RadioRA2::setDMXorLutron(int id, int level, bool fade, bool suppress,
   } else {
     auto& out = outputs_[id];
     if (suppress) {
-      suppressDummyDimmer_.insert(id);
+      suppressLutronDimmer(id, true);
     }
     if (!noUpdate) {
+      // NoUpdate must not be set on the very final call, as that call both
+      // flushes our cached state to the Lutron system and removes the
+      // suppression.
       command(fmt::format("#OUTPUT,{},1,{}.{:02}",
                           id, level/100, level%100),
-              suppress ? [this, id](auto) { suppressDummyDimmer_.erase(id); }
+              suppress ? [this, id](auto) { suppressLutronDimmer(id, false); }
                        : (std::function<void (const std::string&)>)nullptr);
     }
     if (out.level != level) {
@@ -885,6 +915,9 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
   // Toggle control / Room monitoring
   case BUTTON_TOGGLE:
   case BUTTON_ADVANCED_TOGGLE: {
+    keypad.dimDirection = 0;
+    keypad.startOfDim = 0;
+    keypad.firstTap = 0;
     keypad.lastButton = button.id;
     if (isReleased) {
       return;
@@ -902,6 +935,9 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
 
   // Single/Multi-room scene
   case BUTTON_SINGLE_ACTION:
+    keypad.dimDirection = 0;
+    keypad.startOfDim = 0;
+    keypad.firstTap = 0;
     keypad.lastButton = button.id;
     if (isReleased) {
       return;
@@ -918,29 +954,10 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
   case BUTTON_RAISE: {
     auto now = Util::millis();
     if (isReleased) {
-      // Handle double taps by jumping the dimmer to the most extreme values
-      // (i.e. fully on or off). But ignore triple taps or more. That would
-      // happen if the user is rapidly pushing the button to step through
-      // multiple discrete intervals because they don't like smooth adjustments.
-      // In those situations we don't want to confuse them by jumping all the
-      // way.
-      if (keypad.numTaps == 2 && now - keypad.startOfDim < 3*DOUBLETAP/2) {
-        int level = keypad.dimDirection > 0 ? 10000 : 0;
-        event_.addTimeout(std::min(0u, keypad.startOfDim + DOUBLETAP - now),
-        [=, this, &keypad]() {
-          if (keypad.numTaps == 2) {
-            keypad.numTaps = 0;
-            for (const auto& as :
-                   keypad.components[keypad.lastButton].assignments) {
-              setDMXorLutron(as.id, level, false);
-            }
-          }
-        });
-      }
-
       // If using dummy output devicess, both Lutron and us will try to adjust
       // the dimmer. Avoid flashing, by forcing the final value to the one that
       // we picked.
+      std::map<int, int> targetLevels;
       for (const auto& as : keypad.components[keypad.lastButton].assignments) {
         // The final dimmer level might need adjustment. If the user only
         // pressed the button for a short amount of time, jump a full increment.
@@ -951,7 +968,6 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
         } else if (outputs_[as.id].name.find(':') != std::string::npos) {
           // DMX dimmer defined inline in the name of a Lutron "dummy" device.
           level = outputs_[as.id].level;
-          suppressDummyDimmer_.erase(as.id);
         } else {
           // This dimmer is controlled by Lutron, leave it alone.
           continue;
@@ -972,30 +988,92 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
           }
         }
         level = std::min(10000, std::max(0, level));
-        setDMXorLutron(as.id, level, true, true, false);
+        targetLevels[as.id] = level;
       }
-      keypad.dimDirection = 0;
+
+      // Handle double taps by jumping the dimmer to the most extreme values
+      // (i.e. fully on or off). But ignore triple taps or more. That would
+      // happen if the user is rapidly pushing the button to step through
+      // multiple discrete intervals because they don't like smooth adjustments.
+      // In those situations we don't want to confuse them by jumping all the
+      // way.
+      if (keypad.numTaps == 2 && now - keypad.firstTap < DOUBLETAP) {
+        const int jumpedLevel = keypad.dimDirection > 0 ? 10000 : 0;
+        // Base the estimated time between taps on the previously seen taps.
+        // That makes sure we react to double clicks as soon as possible, but
+        // we also give enough time to press a third time, if the user is on
+        // a tapping streak.
+        const int dtTmo = keypad.startOfDim - keypad.firstTap;
+        // We don't really know yet whether this will be a double tap that
+        // jumps the level, or whether there will be additional taps to
+        // manually step through several discrete brightness values. Update
+        // our own representation, as that's safe to do synchronously but
+        // don't send a command to the Lutron device as asynchronous execution
+        // can make brightness jump back and forth.
+        for (const auto& [id, level] : targetLevels) {
+          setDMXorLutron(id, level, true, true, true);
+        }
+        event_.addTimeout(dtTmo,
+        [this, jumpedLevel, targetLevels, &keypad]() {
+          if (keypad.numTaps == 2) {
+            // This was a doubletap. It wasn't followed by any other taps. So,
+            // execute the action and reset tap detection.
+            keypad.numTaps = 0;
+            keypad.firstTap = 0;
+            for (const auto& as :
+                   keypad.components[keypad.lastButton].assignments) {
+              setDMXorLutron(as.id, jumpedLevel, true, true, false);
+            }
+          } else {
+            // Our doubletap actually turned out to be one in a series of
+            // several taps. By the time our timer expired, numTaps was either
+            // bigger than 2 or had possibly already reset back to 1. In either
+            // case, it is extremely unlikely to be exactly 2.
+            // We never send our brightness level to Lutron. But that's OK, as
+            // one of the subsequent button taps will have done that with a more
+            // up-to-date value. The value captured by this lambda is now stale.
+            // So, there literally is nothing to do for us.
+          }
+        });
+      } else {
+        // If there is no disambiguity about whether this might be a doubletap,
+        // we can immediately set the final target level. In that case, we
+        // also send the command to Lutron.
+        for (const auto& [id, level] : targetLevels) {
+          setDMXorLutron(id, level, true, true, false);
+        }
+      }
+
       keypad.startOfDim = now;
       keypad.startingLevels.clear();
     } else {
+      // Button pressed:
       if (keypad.lastButton < 0 ||
           keypad.components.find(keypad.lastButton) == keypad.components.end()){
         DBG("No last button known for this keypad");
         return;
       }
-      keypad.dimDirection = button.type == BUTTON_LOWER ? -1 : 1;
+      auto newDirection = button.type == BUTTON_LOWER ? -1 : 1;
+      if (keypad.dimDirection != newDirection) {
+        keypad.dimDirection = newDirection;
+        keypad.startOfDim = 0;
+        keypad.firstTap = 0;
+      }
       keypad.startingLevels.clear();
 
       // We want to disambiguate double taps from a stream of multiple taps.
       // If we are seeing the latter, just keep counting and don't reset to
       // single tap mode.
-      if (keypad.startOfDim && (now - keypad.startOfDim <= DOUBLETAP ||
-          (keypad.numTaps >= 2 && now - keypad.startOfDim < 5000))) {
+      if (now - keypad.startOfDim <= 5000) {
         keypad.numTaps++;
       } else {
         keypad.numTaps = 1;
       }
       keypad.startOfDim = now;
+      if (keypad.numTaps == 1) {
+        keypad.firstTap = now;
+      }
+
       for (const auto& as : keypad.components[keypad.lastButton].assignments){
         // Both DMX outputs defined in "site.json" and defined inline with a
         // dummy device must be manually adjusted while the dimmer button is
@@ -1004,6 +1082,7 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
           keypad.startingLevels[as.id] = namedOutput_[-as.id-1].level;
         } else if (outputs_[as.id].name.find(':') != std::string::npos) {
           keypad.startingLevels[as.id] = outputs_[as.id].level;
+          suppressLutronDimmer(as.id, true);
         }
       }
       if (keypad.startingLevels.size()) {
@@ -1021,7 +1100,7 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
 
 void RadioRA2::dimSmooth(Device& keypad) {
 //DBG("RadioRA2::dimSmooth()");
-  if (!keypad.dimDirection || keypad.startingLevels.size() <= 0) {
+  if (keypad.startingLevels.size() <= 0) {
     return;
   }
   int delta = ((int)Util::millis() - keypad.startOfDim)*

@@ -57,7 +57,7 @@ class RadioRA2 {
   const unsigned int LONG_REOPEN_TMO  = 60000;
   const unsigned int ALIVE_INTERVAL   = 60000;
   const unsigned int ALIVE_CMD_TMO    =  5000;
-  const unsigned int DOUBLETAP        =   550;
+  const unsigned int DOUBLETAP        =   800;
   const unsigned int DIMLEVELS        =    15;
   const unsigned int DIMRATE          =    25; // 25% change per second
 
@@ -199,7 +199,7 @@ class RadioRA2 {
     Device() { }
     Device(int id, const std::string& name, DeviceType type)
       : id(id), name(name), type(type), lastButton(-1), dimDirection(0),
-        startOfDim(0) { }
+        startOfDim(0), firstTap(0), numTaps(0) { }
     bool operator==(const Device& o) const {
       return id == o.id && type == o.type && name == o.name &&
              components == o.components;
@@ -219,6 +219,7 @@ class RadioRA2 {
     int                      lastButton;
     int                      dimDirection;
     int                      startOfDim;
+    int                      firstTap;
     int                      numTaps;
     std::map<int, int>       startingLevels;
   };
@@ -252,6 +253,7 @@ class RadioRA2 {
   void refreshCurrentState(std::function<void ()> cb);
   int getCurrentLevel(int id);
   void recomputeLEDs();
+  void suppressLutronDimmer(int id, bool mode);
   void setDMXorLutron(int id, int level, bool fade, bool suppress = false,
                       bool noUpdate = false);
   void buttonPressed(Device& keypad, Component& button, bool isReleased);
@@ -275,4 +277,5 @@ class RadioRA2 {
   std::map<int, Output> outputs_;
   std::vector<NamedOutput> namedOutput_;
   std::set<int> suppressDummyDimmer_;
+  std::map<int, unsigned> releaseDummyDimmer_;
 };
