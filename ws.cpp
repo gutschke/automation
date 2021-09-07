@@ -186,11 +186,11 @@ int WS::keypadsCallback(lws *wsi, lws_callback_reasons reason,
   case LWS_CALLBACK_HTTP_BIND_PROTOCOL:
     // Each new HTTP pending keeps track of partial data that hasn't been
     // sent yet.
-    DBG("Keypads::LWS_CALLBACK_HTTP_BIND_PROTOCOL");
+//  DBG("Keypads::LWS_CALLBACK_HTTP_BIND_PROTOCOL");
     new (pending) std::string();
     break;
   case LWS_CALLBACK_HTTP: {
-    DBG("Keypads::LWS_CALLBACK_HTTP");
+//  DBG("Keypads::LWS_CALLBACK_HTTP");
     if (!pending) break;
     int status;
     const char *contentType;
@@ -219,7 +219,7 @@ int WS::keypadsCallback(lws *wsi, lws_callback_reasons reason,
     lws_callback_on_writable(wsi);
     return 0; }
   case LWS_CALLBACK_HTTP_WRITEABLE: {
-    DBG("Keypads::LWS_CALLBACK_HTTP_WRITEABLE");
+//  DBG("Keypads::LWS_CALLBACK_HTTP_WRITEABLE");
     if (!pending) break;
     size_t n = std::min(pending->size(), lws_ptr_diff_size_t(end, ptr));
     const lws_write_protocol mode =
@@ -241,7 +241,7 @@ int WS::keypadsCallback(lws *wsi, lws_callback_reasons reason,
     return 0;
   }
   case LWS_CALLBACK_HTTP_DROP_PROTOCOL:
-    DBG("Keypads::LWS_CALLBACK_HTTP_DROP_PROTOCOL");
+//  DBG("Keypads::LWS_CALLBACK_HTTP_DROP_PROTOCOL");
     std::destroy_at(pending);
     break;
   default:
@@ -259,21 +259,21 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
   case LWS_CALLBACK_PROTOCOL_DESTROY:
     // Libwebsocket it shutting down, clean out all pending sessions, if any
     // are still around.
-    DBG("WebSocket::LWS_CALLBACK_PROTOCOL_DESTROY");
+//  DBG("WebSocket::LWS_CALLBACK_PROTOCOL_DESTROY");
     for (auto& [ _, pending ] : that->wsi_) {
       delete pending;
     }
     that->wsi_.clear();
     break;
   case LWS_CALLBACK_ESTABLISHED:
-    DBG("WebSocket::LWS_CALLBACK_ESTABLISHED");
+//  DBG("WebSocket::LWS_CALLBACK_ESTABLISHED");
     // New websocket opened connection to us and is waiting for updates.
     if (that->wsi_.find(wsi) == that->wsi_.end()) {
       that->wsi_[wsi] = *(std::string **)user = new std::string(LWS_PRE, 0);
     }
     break;
   case LWS_CALLBACK_CLOSED: {
-    DBG("WebSocket::LWS_CALLBACK_CLOSED");
+//  DBG("WebSocket::LWS_CALLBACK_CLOSED");
     // Remove closed websocket session from the list of live sessions.
     auto it = that->wsi_.find(wsi);
     if (it != that->wsi_.end()) {
@@ -283,7 +283,7 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
     }
     break; }
   case LWS_CALLBACK_SERVER_WRITEABLE: {
-    DBG("WebSocket::LWS_CALLBACK_SERVER_WRITEABLE");
+//  DBG("WebSocket::LWS_CALLBACK_SERVER_WRITEABLE");
     if (!pending || pending->size() <= LWS_PRE) {
       break;
     }
@@ -295,7 +295,7 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
     pending->erase(LWS_PRE);
     break; }
   case LWS_CALLBACK_RECEIVE: {
-    DBG("WebSocket::LWS_CALLBACK_RECEIVE");
+//  DBG("WebSocket::LWS_CALLBACK_RECEIVE");
     const auto received = std::string((char *)in, len);
     DBG("\"" << received << "\"");
     if (that->cmd_ && received.size() > 0 && received[0] == '#') {
