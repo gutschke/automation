@@ -1079,8 +1079,11 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
         // dummy device must be manually adjusted while the dimmer button is
         // being held.
         if (as.id < 0) {
-          keypad.startingLevels[as.id] = namedOutput_[-as.id-1].level;
-        } else if (outputs_[as.id].name.find(':') != std::string::npos) {
+          if (namedOutput_[-as.id-1].level) {
+            keypad.startingLevels[as.id] = namedOutput_[-as.id-1].level;
+          }
+        } else if (outputs_[as.id].name.find(':') != std::string::npos &&
+                   outputs_[as.id].level) {
           keypad.startingLevels[as.id] = outputs_[as.id].level;
           suppressLutronDimmer(as.id, true);
         }
