@@ -155,8 +155,9 @@ void RadioRA2::readLine(const std::string& line) {
             if (ledState_ &&
                 (keypad.type == DEV_SEETOUCH_KEYPAD ||
                  keypad.type == DEV_HYBRID_SEETOUCH_KEYPAD)) {
-              ledState_(keypad.id, led->second.id, *endPtr == '1',
-                        getLevelForButton(led->second.assignments));
+              int level = getLevelForButton(led->second.assignments);
+              ledState_(keypad.id, led->second.id, !!(level | (*endPtr == '1')),
+                        level);
             }
             led->second.ledState = *endPtr == '1';
           }
@@ -604,16 +605,12 @@ void RadioRA2::refreshCurrentState(std::function<void ()> cb) {
           }
           // LED state isn't always perfectly tracked by the Lutron controller.
           // Besides 0 and 1, it can also return 255. In that case, we assume
-          // that the LED is unchanged or turned off. After a fresh restart,
-          // initialize it to "off". That might or might not be correct
-          // depending on why the controller lost track of the LED state.
-          // Hopefully, at that point, RadioRA2::recomputeLEDs() will
-          // eventually bring everything back to a consistent state.
+          // that the LED is unchanged or turned off.
           if (ledState_ &&
               (dev.second.type == DEV_SEETOUCH_KEYPAD ||
                dev.second.type == DEV_HYBRID_SEETOUCH_KEYPAD)) {
-            ledState_(dev.second.id, comp.second.id, false,
-                      getLevelForButton(comp.second.assignments));
+            int level = getLevelForButton(comp.second.assignments);
+            ledState_(dev.second.id, comp.second.id, !!level, level);
           }
           comp.second.ledState = 0;
           command(fmt::format("?DEVICE,{},{},{}",
@@ -672,8 +669,8 @@ void RadioRA2::broadcastDimmerChanges(int id) {
       for (const auto& [ _, btn ] : dev.components) {
         for (const auto& as : btn.assignments) {
           if (as.id == id) {
-            ledState_(dev.id, btn.id, (int)btn.ledState,
-                      getLevelForButton(btn.assignments));
+            int level = getLevelForButton(btn.assignments);
+            ledState_(dev.id, btn.id, (int)!!(level | btn.ledState), level);
             goto nextButton;
           }
         }
