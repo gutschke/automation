@@ -19,7 +19,7 @@ RadioRA2::RadioRA2(Event& event,
                    std::function<void (const std::string& line,
                                        const std::string& context,
                                        bool fade)> input,
-                   std::function<void (int, int, bool)> ledState,
+                   std::function<void (int, int, bool, int)> ledState,
                    std::function<void ()> hb,
                    std::function<void ()> schemaInvalid,
                    const std::string& gateway,
@@ -155,7 +155,8 @@ void RadioRA2::readLine(const std::string& line) {
             if (ledState_ &&
                 (keypad.type == DEV_SEETOUCH_KEYPAD ||
                  keypad.type == DEV_HYBRID_SEETOUCH_KEYPAD)) {
-              ledState_(keypad.id, led->second.id, *endPtr == '1');
+              ledState_(keypad.id, led->second.id, *endPtr == '1',
+                        getLevelForButton(led->second.assignments));
             }
             led->second.ledState = *endPtr == '1';
           }
@@ -206,6 +207,7 @@ void RadioRA2::readLine(const std::string& line) {
               level = out->second.level;
             }
           }
+          broadcastDimmerChanges(id);
         }
       }
     }
@@ -610,7 +612,8 @@ void RadioRA2::refreshCurrentState(std::function<void ()> cb) {
           if (ledState_ &&
               (dev.second.type == DEV_SEETOUCH_KEYPAD ||
                dev.second.type == DEV_HYBRID_SEETOUCH_KEYPAD)) {
-            ledState_(dev.second.id, comp.second.id, false);
+            ledState_(dev.second.id, comp.second.id, false,
+                      getLevelForButton(comp.second.assignments));
           }
           comp.second.ledState = 0;
           command(fmt::format("?DEVICE,{},{},{}",
@@ -639,6 +642,45 @@ int RadioRA2::getCurrentLevel(int id) {
     }
   }
   return -1;
+}
+
+int RadioRA2::getLevelForButton(const std::vector<Assignment>& assignments) {
+  // The web UI would like to show a visual representation of the dimmer
+  // state while it is being adjusted. This is complicated by the fact that
+  // it doesn't actually show information on fixtures at any point. Instead,
+  // it only represents keypads. Keypads can have fixtures assigned to their
+  // buttons though. Make a reasonable effort to compute the current
+  // dimmer state that matches an assignment.
+  int level = 0;
+  for (const auto& as : assignments) {
+    const int assignedLevel = as.level;
+    const int currentLevel = getCurrentLevel(as.id);
+    if (!assignedLevel) {
+      continue;
+    }
+    level = std::max(level, std::min(10000, currentLevel));
+  }
+  return level;
+}
+
+void RadioRA2::broadcastDimmerChanges(int id) {
+  // The web UI wants to show dimmer levels as they are changing.
+  // The same fixture can be assigned to multiple buttons. Find all
+  // buttons that match.
+  if (ledState_) {
+    for (const auto& [ _, dev ] : devices_) {
+      for (const auto& [ _, btn ] : dev.components) {
+        for (const auto& as : btn.assignments) {
+          if (as.id == id) {
+            ledState_(dev.id, btn.id, (int)btn.ledState,
+                      getLevelForButton(btn.assignments));
+            goto nextButton;
+          }
+        }
+      nextButton:;
+      }
+    }
+  }
 }
 
 void RadioRA2::recomputeLEDs() {
@@ -679,7 +721,8 @@ void RadioRA2::recomputeLEDs() {
           if (ledState_ &&
               (device.type == DEV_SEETOUCH_KEYPAD ||
                device.type == DEV_HYBRID_SEETOUCH_KEYPAD)) {
-            ledState_(device.id, component.id, ledState);
+            ledState_(device.id, component.id, ledState,
+                      getLevelForButton(component.assignments));
           }
           command(fmt::format("#DEVICE,{},{},9,{}",
             device.id, component.led, ledState ? 1 : 0));
@@ -877,13 +920,23 @@ void RadioRA2::setDMXorLutron(int id, int level, bool fade, bool suppress,
   // callback instead of relying on the usual callbacks to do so for us,
   // when they saw that Lutron accepted the value.
   if (id < 0) {
+    if (id >= 0 || -id > (int)namedOutput_.size()) {
+      DBG("Invalid id " << id);
+      return;
+    }
     auto& out = namedOutput_[-id-1];
     if (out.level != level) {
       out.level = level;
       out.cb(level, fade);
     }
+    broadcastDimmerChanges(id);
   } else {
-    auto& out = outputs_[id];
+    auto it = outputs_.find(id);
+    if (it == outputs_.end()) {
+      DBG("Invalid id " << id);
+      return;
+    }
+    auto& out = it->second;
     if (suppress) {
       suppressLutronDimmer(id, true);
     }
@@ -898,6 +951,7 @@ void RadioRA2::setDMXorLutron(int id, int level, bool fade, bool suppress,
     }
     if (out.level != level) {
       out.level = level;
+      broadcastDimmerChanges(id);
       if (input_) {
         input_(fmt::format("~OUTPUT,{},1,{}.{:02}",
                            id, level/100, level%100),
@@ -919,16 +973,20 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
     keypad.startOfDim = 0;
     keypad.firstTap = 0;
     keypad.lastButton = button.id;
+
     if (isReleased) {
       return;
     }
+    // Toggle switches between on and off for all devices in this assignments.
     bool on = false;
     for (const auto& as : button.assignments) {
       on |= getCurrentLevel(as.id) > 0;
     }
+    // Aliased outputs that refer to DMX fixtures have to be set by us, each
+    // time a button is pressed.
     for (const auto& as : button.assignments) {
       if (as.id < 0) {
-        setDMXorLutron(as.id, as.level, true);
+        setDMXorLutron(as.id, on ? 0 : as.level, true);
       }
     }
     break; }
@@ -942,6 +1000,8 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
     if (isReleased) {
       return;
     }
+    // Aliased outputs that refer to DMX fixtures have to be set by us, each
+    // time a button is pressed.
     for (const auto& as : button.assignments) {
       if (as.id < 0) {
         setDMXorLutron(as.id, as.level, true);
@@ -964,13 +1024,19 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
         int level;
         if (as.id < 0) {
           // DMX dimmer configured in "site.json".
-          level = namedOutput_[-as.id-1].level;
-        } else if (outputs_[as.id].name.find(':') != std::string::npos) {
-          // DMX dimmer defined inline in the name of a Lutron "dummy" device.
-          level = outputs_[as.id].level;
+          if (-as.id <= (int)namedOutput_.size()) {
+            level = namedOutput_[-as.id-1].level;
+          }
         } else {
-          // This dimmer is controlled by Lutron, leave it alone.
-          continue;
+          auto it = outputs_.find(as.id);
+          if (it != outputs_.end() &&
+              it->second.name.find(':') != std::string::npos) {
+            // DMX dimmer defined inline in the name of a Lutron "dummy" device.
+            level = it->second.level;
+          } else {
+            // This dimmer is controlled by Lutron, leave it alone.
+            continue;
+          }
         }
 
         // If we no longer remember the starting brightness, that means that
@@ -1080,10 +1146,16 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
         // being held.
         if (as.level) {
           if (as.id < 0) {
-            keypad.startingLevels[as.id] = namedOutput_[-as.id-1].level;
-          } else if (outputs_[as.id].name.find(':') != std::string::npos) {
-            keypad.startingLevels[as.id] = outputs_[as.id].level;
-            suppressLutronDimmer(as.id, true);
+            if (-as.id <= (int)namedOutput_.size()) {
+              keypad.startingLevels[as.id] = namedOutput_[-as.id-1].level;
+            }
+          } else {
+            auto it = outputs_.find(as.id);
+            if (it != outputs_.end() &&
+                it->second.name.find(':') != std::string::npos) {
+              keypad.startingLevels[as.id] = it->second.level;
+              suppressLutronDimmer(as.id, true);
+            }
           }
         }
       }

@@ -31,7 +31,7 @@ class RadioRA2 {
            std::function<void (const std::string& line,
                                const std::string& context,
                                bool fade)> input = nullptr,
-           std::function<void (int, int, bool)> ledState = nullptr,
+           std::function<void (int, int, bool, int)> ledState = nullptr,
            std::function<void ()> hb = nullptr,
            std::function<void ()> schemaInvalid = nullptr,
            const std::string& gateway = "",
@@ -252,6 +252,8 @@ class RadioRA2 {
   bool extractSchemaInfo(pugi::xml_document& xml_);
   void refreshCurrentState(std::function<void ()> cb);
   int getCurrentLevel(int id);
+  int getLevelForButton(const std::vector<Assignment>& assignments);
+  void broadcastDimmerChanges(int id);
   void recomputeLEDs();
   void suppressLutronDimmer(int id, bool mode);
   void setDMXorLutron(int id, int level, bool fade, bool suppress = false,
@@ -263,7 +265,7 @@ class RadioRA2 {
   Lutron lutron_;
   bool initialized_;
   std::function<void (const std::string&, const std::string&, bool)> input_;
-  std::function<void (int, int, bool)> ledState_;
+  std::function<void (int, int, bool, int)> ledState_;
   std::function<void ()> hb_;
   std::function<void ()> schemaInvalid_;
   std::vector<std::function<void ()>> onInit_;

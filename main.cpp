@@ -333,8 +333,11 @@ static void server() {
     [&]() { augmentConfig(site, ra2, dmx, relay); initialized = true; },
     [&](const std::string& line, const std::string& context, bool fade) {
       readLine(ra2, dmx, relay, line, context, fade); },
-    [&](int kp, int led, bool state) {
-      if (ws) ws->broadcast(fmt::format("{},{},{}", kp, led, (int)state));
+    [&](int kp, int led, bool state, int level) {
+      if (ws) {
+        ws->broadcast(fmt::format("{},{},{},{}.{:02}",
+                                  kp, led, (int)state, level/100, level%100));
+      }
     },
     // Communicate with parent process. This allows the watchdog
     // to kill us, if we become unresponsive. And it also allows

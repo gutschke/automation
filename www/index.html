@@ -46,6 +46,20 @@
           grid-column-end: 3;
           overflow: hidden;
           border: 1px solid black;
+          padding-top: 3px;
+          padding-left: 2px;
+          position: relative;
+      }
+      div.switch > ul > li:after {
+          background-color: #2e8fe5;
+          content: '';
+          position: absolute;
+          top: 85%;
+          left: 0px;
+          bottom: 0px;
+          right: calc(100% - var(--level, 0%));
+          z-index: 1;
+          mix-blend-mode: multiply;
       }
       div.switch > ul > li,
       div.switch > ul > li * {
@@ -102,12 +116,14 @@
         socket.onmessage = (event) => {
           // Split the status message into switch integration id, and button
           // component number. Then add/remove CSS classes as needed.
+          console.log(event.data);
           for (const part of event.data.split(' ')) {
             const msg = part.split(',');
             const led = document.getElementById(msg[0] + '/' + msg[1]);
             if (led) {
               if (msg[2] == 1) led.classList.add('on');
               else             led.classList.remove('on');
+              led.style.setProperty('--level', msg[3] + '%');
             }
           }
         };
