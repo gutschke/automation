@@ -283,6 +283,28 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
   }
 }
 
+static void updateUI(WS* ws, Event& event, int kp, int led,
+                     bool state, int level) {
+  if (!ws) {
+    return;
+  }
+  static std::map<std::pair<int, int>, std::pair<bool, int>> cache;
+  if (!cache.size()) {
+    // Batch multiple updates into a single broadcast message.
+    event.addTimeout(100, [ws]() {
+      std::string s;
+      for (const auto& [ k, v ] : cache) {
+        s += fmt::format("{},{},{},{}.{:02} ",
+               k.first, k.second, (int)v.first, v.second/100, v.second%100);
+      }
+      s.pop_back();
+      cache.clear();
+      ws->broadcast(s);
+    });
+  }
+  cache[std::make_pair(kp, led)] = std::make_pair(state, level);
+}
+
 static void dmxRemoteServer(Event& event) {
 #ifndef NDEBUG
   // By setting the DMXSERVER environment variable to an empty string, we
@@ -334,11 +356,7 @@ static void server() {
     [&](const std::string& line, const std::string& context, bool fade) {
       readLine(ra2, dmx, relay, line, context, fade); },
     [&](int kp, int led, bool state, int level) {
-      if (ws) {
-        ws->broadcast(fmt::format("{},{},{},{}.{:02}",
-                                  kp, led, (int)state, level/100, level%100));
-      }
-    },
+      updateUI(ws, event, kp, led, state, level); },
     // Communicate with parent process. This allows the watchdog
     // to kill us, if we become unresponsive. And it also allows
     // us to request a restart, if the automation schema changed

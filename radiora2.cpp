@@ -155,7 +155,7 @@ void RadioRA2::readLine(const std::string& line) {
             if (ledState_ &&
                 (keypad.type == DEV_SEETOUCH_KEYPAD ||
                  keypad.type == DEV_HYBRID_SEETOUCH_KEYPAD)) {
-              int level = getLevelForButton(led->second.assignments);
+              const int level = getLevelForButton(led->second.assignments);
               ledState_(keypad.id, led->second.id, !!(level | (*endPtr == '1')),
                         level);
             }
@@ -609,7 +609,7 @@ void RadioRA2::refreshCurrentState(std::function<void ()> cb) {
           if (ledState_ &&
               (dev.second.type == DEV_SEETOUCH_KEYPAD ||
                dev.second.type == DEV_HYBRID_SEETOUCH_KEYPAD)) {
-            int level = getLevelForButton(comp.second.assignments);
+            const int level = getLevelForButton(comp.second.assignments);
             ledState_(dev.second.id, comp.second.id, !!level, level);
           }
           comp.second.ledState = 0;
@@ -669,7 +669,7 @@ void RadioRA2::broadcastDimmerChanges(int id) {
       for (const auto& [ _, btn ] : dev.components) {
         for (const auto& as : btn.assignments) {
           if (as.id == id) {
-            int level = getLevelForButton(btn.assignments);
+            const int level = getLevelForButton(btn.assignments);
             ledState_(dev.id, btn.id, (int)!!(level | btn.ledState), level);
             goto nextButton;
           }
@@ -871,6 +871,26 @@ std::string RadioRA2::getKeypads() {
       }
       str << (++button != dev.components.end() ? "," : "");
     }
+    str << "},\"dimmers\":{";
+
+    bool firstDimmer = true;
+    for (auto button = dev.components.begin(); button != dev.components.end();
+         ++button) {
+      while (button->second.led < 0) {
+        if (++button == dev.components.end()) {
+          goto allDimmers;
+        }
+      }
+      if (firstDimmer) {
+        firstDimmer = false;
+      } else {
+        str << ",";
+      }
+      const auto btn = button->second;
+      const auto dimmer = getLevelForButton(btn.assignments);
+      str << fmt::format("\"{}\":{}.{:02}", btn.id, dimmer/100, dimmer%100);
+    }
+  allDimmers:
     str << "}}";
   }
  allDevices:

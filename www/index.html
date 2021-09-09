@@ -4,6 +4,8 @@
     <meta charset="utf-8">
     <title>Home Automation</title>
     <style>
+      @charset "utf-8";
+
       /* Each Keypad switch is contained in a DIV that represents the wallplate.
        * We mimic the general proportions of a standard Decora wallplate.
        */
@@ -40,6 +42,7 @@
       }
       /* Style individual list items LI to look like buttons
        */
+      @property --level     { syntax: "<percentage>"; inherits: true; initial-value: 0%; }
       div.switch > ul > li {
           list-style: none;
           grid-column-start: 1;
@@ -49,8 +52,14 @@
           padding-top: 3px;
           padding-left: 2px;
           position: relative;
+          --level: 0%;
+          --old-level: 0%;
+          --new-level: 0%;
+          --last-level: 0%;
+          --last-millis: 0;
       }
-      div.switch > ul > li:after {
+      div.switch > ul > li > .slider {
+          animation: slider 0.4s 1;
           background-color: #2e8fe5;
           content: '';
           position: absolute;
@@ -60,6 +69,10 @@
           right: calc(100% - var(--level, 0%));
           z-index: 1;
           mix-blend-mode: multiply;
+      }
+      @keyframes slider {
+          0% { --level: var(--old-level); }
+          100% { --level: var(--new-level); }
       }
       div.switch > ul > li,
       div.switch > ul > li * {
@@ -104,6 +117,40 @@
     <script>
       var socket;
 
+      function setSlider(el, level) {
+        const curr = parseFloat((getComputedStyle(el).
+                       getPropertyValue('--last-level') || '0%').slice(0, -1));
+        if (curr != level) {
+          const now = (new Date()).getTime();
+          let oldChildren = [];
+          for (const s of el.getElementsByTagName('DIV')) oldChildren.push(s);
+          for (const s of oldChildren) s.style.animationPlayState = 'paused';
+          el.style.setProperty('--level', level + '%');
+          el.style.setProperty('--last-level', level + '%');
+          el.style.setProperty('--old-level', curr + '%');
+          el.style.setProperty('--new-level', level + '%');
+          el.style.setProperty('--last-millis', '"' + now + '"');
+          // Restarting or even just modifying a running animation is very
+          // difficult. Instead, delete the old element and add a new one
+          // that runs an animation with different parameters. Be careful to
+          // avoid anything that could cause flicker.
+          const slider = document.createElement('DIV');
+          slider.className = 'slider';
+          el.appendChild(slider);
+          for (const s of oldChildren) s.remove();
+          // After a while, remove the slider completely. It's only visible,
+          // while the user is actively changing a fixture's brightness.
+          setTimeout(function() {
+            if (!el.children.length) return;
+            const now = (new Date()).getTime();
+            const last = parseInt(getComputedStyle(el).
+                                  getPropertyValue('--last-millis').slice(1));
+            if (now - last >= 1200) {
+              for (const s of el.getElementsByTagName('DIV')) s.remove();
+            } }, 1200);
+        }
+      }
+
       function monitorLEDs() {
         let timer;
         // Send a WebSocket request to be notified of LED status changes.
@@ -123,7 +170,7 @@
             if (led) {
               if (msg[2] == 1) led.classList.add('on');
               else             led.classList.remove('on');
-              led.style.setProperty('--level', msg[3] + '%');
+              setSlider(led, msg[3]);
             }
           }
         };
@@ -281,7 +328,16 @@
                   content += k.buttons[button] ? '\u21D1' : '\u21D3';
                   content += '\u00A0</span>';
                 }
-                html += `<li${cls} id="${keypad}/${button}">${content}</li>`;
+                let style = '';
+                if (k.dimmers.hasOwnProperty(button)) {
+                  style = `--level:${k.dimmers[button]}%`;
+                  style = `--last-level:${k.dimmers[button]}%`;
+                  style = ` style="${style}"`;
+                } else {
+                  style = '';
+                }
+                html += `<li${cls} id="${keypad}/${button}"${
+                          style}>${content}</li>`;
               }
               html += '</ul></div>';
             }
