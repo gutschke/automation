@@ -29,7 +29,7 @@
           margin: 2rem;
       }
       /* On phones, implement a carousel to switch through keypads.           */
-      @media only screen and (max-device-width: 480px) {
+      @media only screen and (pointer: coarse) and (hover: none) {
         .viewport {
             list-style: none;
             position: absolute;
@@ -397,7 +397,7 @@
             // On phones, resize the keypad to fill the entire screen.
             const setZoom = function() {
               const phone = window.matchMedia(
-                           'only screen and (max-device-width: 480px)').matches;
+                 'only screen and (pointer: coarse) and (hover: none)').matches;
               for (const el of document.getElementsByClassName('switch')) {
                 if (phone) {
                   const w = 0.8*window.innerWidth / el.offsetWidth;
