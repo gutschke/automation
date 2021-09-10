@@ -283,10 +283,11 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
     break; }
   case LWS_CALLBACK_SERVER_WRITEABLE: {
 //  DBG("WebSocket::LWS_CALLBACK_SERVER_WRITEABLE");
-    if (!pending || pending->size() <= LWS_PRE) {
+    if (!pending || pending->size() < LWS_PRE) {
       break;
     }
     auto n = pending->size() - LWS_PRE;
+//  if (!n) DBG("Sending PONG");
     if (lws_write(wsi, (unsigned char *)&(*pending)[LWS_PRE],
                   n, LWS_WRITE_TEXT) < (ssize_t)n) {
       return -1;
@@ -296,7 +297,12 @@ int WS::websocketCallback(lws *wsi, lws_callback_reasons reason,
   case LWS_CALLBACK_RECEIVE: {
 //  DBG("WebSocket::LWS_CALLBACK_RECEIVE");
     const auto received = std::string((char *)in, len);
-    DBG("\"" << received << "\"");
+    if (received.size() > 0) {
+      DBG("\"" << received << "\"");
+    } else {
+//    DBG("Received PING");
+      lws_callback_on_writable(wsi);
+    }
     if (that->cmd_ && received.size() > 0 && received[0] == '#') {
       that->cmd_(received);
     }
