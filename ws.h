@@ -10,10 +10,12 @@
 
 class WS {
  public:
-  WS(Event *event, int port = 80,
-     std::function<const std::string ()> keypads = nullptr,
-     std::function<void (const std::string&)> cmd = nullptr);
+  WS(Event *event, int port = 80);
   ~WS();
+  WS& onkeypadreq(std::function<const std::string ()> keypadReq) {
+    keypadReq_ = keypadReq; return *this; }
+  WS& oncommand(std::function<void (const std::string&)> cmd) {
+    cmd_ = cmd; return *this; }
   void broadcast(const std::string& s);
 
  private:
@@ -21,7 +23,7 @@ class WS {
   static inline const char keypadsURI[] = "/keypads.json";
 
   Event *event_;
-  std::function<const std::string ()> keypads_;
+  std::function<const std::string ()> keypadReq_;
   std::function<void (const std::string&)> cmd_;
   void *loop_;
   void *loops_;

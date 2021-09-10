@@ -27,17 +27,21 @@ class RadioRA2 {
   inline static const std::string DMXALIAS = "DMX:";
 
   RadioRA2(Event& event,
-           std::function<void ()> init = nullptr,
-           std::function<void (const std::string& line,
-                               const std::string& context,
-                               bool fade)> input = nullptr,
-           std::function<void (int, int, bool, int)> ledState = nullptr,
-           std::function<void ()> hb = nullptr,
-           std::function<void ()> schemaInvalid = nullptr,
            const std::string& gateway = "",
            const std::string& username = "",
            const std::string& password = "");
   ~RadioRA2();
+  RadioRA2& oninit(std::function<void ()> init) {
+    init_.push_back(init); return *this; }
+  RadioRA2& oninput(std::function<void (const std::string& line,
+                                        const std::string& context,
+                                        bool fade)> input) {
+    input_ = input; return *this; }
+  RadioRA2& onledstate(std::function<void (int, int, bool, int)> ledState) {
+    ledState_ = ledState; return *this; }
+  RadioRA2& onheartbeat(std::function<void ()> hb) { hb_ = hb; return *this; }
+  RadioRA2& onschemainvalid(std::function<void ()> schemaInvalid) {
+    schemaInvalid_ = schemaInvalid; return *this; }
   int addOutput(const std::string name, std::function<void (int, bool)> cb);
   void addToButton(int kp, int bt, int id, int level, bool makeToggle = false);
   void toggleOutput(int out);
@@ -269,11 +273,11 @@ class RadioRA2 {
   Event& event_;
   Lutron lutron_;
   bool initialized_;
+  std::vector<std::function<void ()>> init_;
   std::function<void (const std::string&, const std::string&, bool)> input_;
   std::function<void (int, int, bool, int)> ledState_;
   std::function<void ()> hb_;
   std::function<void ()> schemaInvalid_;
-  std::vector<std::function<void ()>> onInit_;
   void *recompute_;
   unsigned int reconnect_;
   unsigned int checkStarted_;

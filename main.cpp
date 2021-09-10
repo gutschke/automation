@@ -370,26 +370,26 @@ static void server() {
   Relay relay(event);
   WS *ws = nullptr;
   RadioRA2 ra2(
-    event,
-    [&]() { augmentConfig(site, ra2, dmx, relay); initialized = true; },
-    [&](const std::string& line, const std::string& context, bool fade) {
-      readLine(ra2, dmx, relay, line, context, fade); },
-    [&](int kp, int led, bool state, int level) {
-      updateUI(ws, event, kp, led, state, level); },
-    // Communicate with parent process. This allows the watchdog
-    // to kill us, if we become unresponsive. And it also allows
-    // us to request a restart, if the automation schema changed
-    // unexpectedly.
-    [](){ if (childFd[1] >= 0 && write(childFd[1], "", 1));},
-    [](){ if (childFd[1] < 0 || !write(childFd[1], "\1", 1)) {
-            DBG("Stale cached data"); _exit(1);}},
-    "",
+    event, "",
     site.contains("USER") ? site["USER"].get<std::string>() : "",
     site.contains("PASSWORD") ? site["PASSWORD"].get<std::string>() : "");
+  ra2.oninit([&]() { augmentConfig(site, ra2, dmx, relay); initialized = true;})
+     .oninput([&](const std::string& line, const std::string&context,bool fade){
+                readLine(ra2, dmx, relay, line, context, fade); })
+     .onledstate([&](int kp, int led, bool state, int level) {
+                   updateUI(ws, event, kp, led, state, level); })
+     // Communicate with parent process. This allows the watchdog
+     // to kill us, if we become unresponsive. And it also allows
+     // us to request a restart, if the automation schema changed
+     // unexpectedly.
+     .onheartbeat([](){ if (childFd[1] >= 0 && write(childFd[1], "", 1));})
+     .onschemainvalid([](){ if (childFd[1] < 0 || !write(childFd[1], "\1", 1)) {
+           DBG("Stale cached data"); _exit(1);}});
+
   WS ws_(&event,
-         site.contains("HTTP PORT") ? site["HTTP PORT"].get<int>() : 8080,
-         [&]() { return ra2.getKeypads(keypadOrder(site, ra2)); },
-         [&](const std::string& s) { ra2.command(s); });
+         site.contains("HTTP PORT") ? site["HTTP PORT"].get<int>() : 8080);
+  ws_.onkeypadreq([&]() { return ra2.getKeypads(keypadOrder(site, ra2)); })
+     .oncommand([&](const std::string& s) { ra2.command(s); });
   ws = &ws_;
   event.loop();
 }

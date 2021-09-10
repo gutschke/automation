@@ -13,13 +13,11 @@
 
 
 Lutron::Lutron(Event& event,
-               std::function<void (const std::string& line)> input,
-               std::function<void (std::function<void ()> cb)> init,
-               std::function<void (void)> closed,
                const std::string& gateway,
                const std::string& username,
                const std::string& passwd)
-  : timeout_(event), event_(event), input_(input), init_(init), closed_(closed),
+  : timeout_(event), event_(event), input_(nullptr),
+    init_([](auto cb) { cb(); }), closed_(nullptr),
     gateway_(gateway), username_(username.empty() ? "lutron" : username),
     passwd_(passwd.empty() ? "integration" : passwd),
     sock_(-1), dontfinalize_(false), isConnected_(false), inCommand_(false),
@@ -418,12 +416,17 @@ void Lutron::login(std::function<void (void)> cb,
           timeout_.pop(freeaddrHandler);
           bool oldCommand = inCommand_;
           inCommand_ = false;
-          init_([=, this]() {
+          const auto doneInitializing = [=, this]() {
             checkDelayed([=, this]() {
               DBG("Finished initializing");
               inCallback_ = false;
               inCommand_ = oldCommand && isConnected_;
-              if (cb) { cb(); } });}); },
+              if (cb) { cb(); } });};
+          if (init_) {
+            init_(doneInitializing);
+          } else {
+            doneInitializing();
+          } },
         [=, this]() {
           // Pop only tmoHandler (already done), then try next address.
           DBG("Failed to enter password");

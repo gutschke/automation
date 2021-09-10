@@ -13,13 +13,17 @@
 class Lutron {
  public:
   Lutron(Event& event,
-         std::function<void (const std::string& line)> input = nullptr,
-         std::function<void (std::function<void ()> cb)> init=[](auto x){x();},
-         std::function<void (void)> closed = nullptr,
          const std::string& gateway = "",
          const std::string& username = "",
          const std::string& passwd = "");
   ~Lutron();
+  Lutron& oninit(std::function<void (std::function<void ()> cb)> init) {
+    init_ = init; return *this; }
+  Lutron& oninput(std::function<void (const std::string& line)> input) {
+    input_ = input; return *this; }
+  Lutron& onclosed(std::function<void ()> closed) {
+    closed_ = closed; return *this; }
+
   void command(const std::string& cmd,
                std::function<void (const std::string& res)> cb = [](auto){},
                std::function<void (void)> err = nullptr,

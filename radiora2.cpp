@@ -14,28 +14,16 @@
 #include "util.h"
 
 
-RadioRA2::RadioRA2(Event& event,
-                   std::function<void ()> init,
-                   std::function<void (const std::string& line,
-                                       const std::string& context,
-                                       bool fade)> input,
-                   std::function<void (int, int, bool, int)> ledState,
-                   std::function<void ()> hb,
-                   std::function<void ()> schemaInvalid,
-                   const std::string& gateway,
-                   const std::string& username,
-                   const std::string& password)
+RadioRA2::RadioRA2(Event& event, const std::string& gateway,
+                   const std::string& username, const std::string& password)
   : event_(event),
-    lutron_(event,
-            [this](const std::string& line) { readLine(line); },
-            [this](auto cb) { RadioRA2::init(cb); },
-            [this]() { closed(); },
-            gateway, username, password),
+    lutron_(event, gateway, username, password),
     initialized_(false),
-    input_(input),
-    ledState_(ledState),
-    hb_(hb),
-    schemaInvalid_(schemaInvalid),
+    init_(),
+    input_(nullptr),
+    ledState_(nullptr),
+    hb_(nullptr),
+    schemaInvalid_(nullptr),
     recompute_(0),
     reconnect_(SHORT_REOPEN_TMO),
     checkStarted_(0),
@@ -43,7 +31,9 @@ RadioRA2::RadioRA2(Event& event,
     uncertain_(0),
     schemaSock_(-1) {
   setlocale(LC_NUMERIC, "C");
-  onInit_.push_back(init);
+  lutron_.oninit([this](auto cb) { init(cb); })
+         .oninput([this](const std::string& line) { readLine(line); })
+         .onclosed([this]() { closed(); });
 
   // The health check not only makes sure that we re-establish a connection
   // whenever it fails, but it also leaves a persistent object that keeps the
@@ -277,10 +267,10 @@ void RadioRA2::init(std::function<void (void)> cb) {
     getSchema((const sockaddr&)addr, addrLen, [=, this]() {
       refreshCurrentState([=, this]() {
         // If this is the first time that we have seen any automation schema,
-        // there will be onInit_ handlers that need to be notified. Remove them
+        // there will be init_ handlers that need to be notified. Remove them
         // afterwards.
-        const auto onInit = std::move(onInit_);
-        for (const auto& o : onInit) {
+        const auto init = std::move(init_);
+        for (const auto& o : init) {
           if (o) {
             event_.runLater(o);
           }

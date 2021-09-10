@@ -4,9 +4,8 @@
 #include "ws.h"
 
 
-WS::WS(Event* event, int port, std::function<const std::string ()> keypads,
-       std::function<void (const std::string&)> cmd)
-  : event_(event), keypads_(keypads), cmd_(cmd), loops_(this),
+WS::WS(Event* event, int port)
+  : event_(event), keypadReq_(nullptr), cmd_(nullptr), loops_(this),
     ctx_{0}, ops_{0}, evlib_{0}, mount_{0}, info_{0}, protocols_{0},
     headers_{0} {
   // Make our event loop compatible with what libwebsocket wants.
@@ -202,10 +201,10 @@ int WS::keypadsCallback(lws *wsi, lws_callback_reasons reason,
       status = HTTP_STATUS_NOT_FOUND;
       contentType = "text/html";
       *pending = err;
-    } else if (that->keypads_) {
+    } else if (that->keypadReq_) {
       status = HTTP_STATUS_OK;
       contentType = "application/json";
-      *pending = that->keypads_();
+      *pending = that->keypadReq_();
     } else {
       status = HTTP_STATUS_INTERNAL_SERVER_ERROR;
       contentType = "text/html";
