@@ -156,7 +156,8 @@ void RadioRA2::readLine(const std::string& line) {
                 (keypad.type == DEV_SEETOUCH_KEYPAD ||
                  keypad.type == DEV_HYBRID_SEETOUCH_KEYPAD)) {
               const int level = getLevelForButton(led->second.assignments);
-              ledState_(keypad.id, led->second.id, !!(level | (*endPtr == '1')),
+              ledState_(keypad.id, led->second.id,
+                        !!(*endPtr == '1' || (*endPtr != '0' && level)),
                         level);
             }
             led->second.ledState = *endPtr == '1';
@@ -610,7 +611,7 @@ void RadioRA2::refreshCurrentState(std::function<void ()> cb) {
               (dev.second.type == DEV_SEETOUCH_KEYPAD ||
                dev.second.type == DEV_HYBRID_SEETOUCH_KEYPAD)) {
             const int level = getLevelForButton(comp.second.assignments);
-            ledState_(dev.second.id, comp.second.id, !!level, level);
+            ledState_(dev.second.id, comp.second.id, false, level);
           }
           comp.second.ledState = 0;
           command(fmt::format("?DEVICE,{},{},{}",
@@ -670,7 +671,7 @@ void RadioRA2::broadcastDimmerChanges(int id) {
         for (const auto& as : btn.assignments) {
           if (as.id == id) {
             const int level = getLevelForButton(btn.assignments);
-            ledState_(dev.id, btn.id, (int)!!(level | btn.ledState), level);
+            ledState_(dev.id, btn.id, (int)btn.ledState, level);
             goto nextButton;
           }
         }
