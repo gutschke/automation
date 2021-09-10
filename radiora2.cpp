@@ -1029,6 +1029,13 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
   // Dimmer control buttons
   case BUTTON_LOWER:
   case BUTTON_RAISE: {
+    // Button pressed:
+    if (keypad.lastButton < 0 ||
+        keypad.components.find(keypad.lastButton) == keypad.components.end()){
+      DBG("No last button known for this keypad");
+      return;
+    }
+
     auto now = Util::millis();
     if (isReleased) {
       // If using dummy output devicess, both Lutron and us will try to adjust
@@ -1130,12 +1137,6 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
       keypad.startOfDim = now;
       keypad.startingLevels.clear();
     } else {
-      // Button pressed:
-      if (keypad.lastButton < 0 ||
-          keypad.components.find(keypad.lastButton) == keypad.components.end()){
-        DBG("No last button known for this keypad");
-        return;
-      }
       auto newDirection = button.type == BUTTON_LOWER ? -1 : 1;
       if (keypad.dimDirection != newDirection) {
         keypad.dimDirection = newDirection;
