@@ -346,17 +346,19 @@
         xhr.onload = () => {
           if (xhr.status === 200) {
             html = '<ol class="viewport">';
-            for (const keypad in xhr.response) {
+            for (const k of xhr.response) {
               // Switches are simply DIV elements containing an unordered list.
+              // All of these switches are wrapped in another list that
+              // implements a carousel on mobile devices, but that doesn't
+              // have any effect on desktop devices.
               // CSS styles encode additional data that we know about each
               // button (e.g. this is an up/down dimmer switch, the associated
               // status LED is turned on, or keypad is a Pico remote that
               // doesn't have dimmer controls nor LEDs).
-              const k = xhr.response[keypad];
-              // As keypad with absolutely no LEDs is a Pico remote.
+              // A keypad with absolutely no LEDs is a Pico remote.
               const isPico = !Object.keys(k.leds).length;
               html += `<li class="slide"><div class="snapper switch${
-                         isPico ? " pico" : ""}" id="${keypad}"><ul>`;
+                         isPico ? " pico" : ""}" id="${k.id}"><ul>`;
               for (const button in k.buttons) {
                 const isOn = k.leds[button];
                 // Dimmer buttons have no user-configurable label. The
@@ -404,7 +406,7 @@
                 } else {
                   style = '';
                 }
-                html += `<li${cls} id="${keypad}/${button}"${
+                html += `<li${cls} id="${k.id}/${button}"${
                           style}>${content}</li>`;
               }
               html += `</ul><span class="label"><b>${

@@ -50,7 +50,7 @@ class RadioRA2 {
                std::function<void (void)> err = nullptr) {
     lutron_.command(cmd, cb, err);
   }
-  std::string getKeypads();
+  std::string getKeypads(const std::vector<int>& order);
 
  private:
   const unsigned int SHORT_REOPEN_TMO =  5000;

@@ -48,6 +48,7 @@
     // "Bed Room: [3], [ 1.1 ], 1"
     // "Den: [4]"
   },
+  "KEYPAD ORDER" : [ 2, 1 ],
   "KEYPAD": {
     "1": { // Hallway Keypad (use the Lutron integration id)
        // Each keypad has buttons labeled "1" through "6"

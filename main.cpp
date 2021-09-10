@@ -367,9 +367,20 @@ static void server() {
     "",
     site.contains("USER") ? site["USER"].get<std::string>() : "",
     site.contains("PASSWORD") ? site["PASSWORD"].get<std::string>() : "");
+  // The "KEYPAD ORDER" parameter is optional and sets a prefered display
+  // order for the keypads in the web UI.
+  std::vector<int> keypadOrder;
+  if (site.contains("KEYPAD ORDER")) {
+    for (const auto& kp : site["KEYPAD ORDER"]) {
+      if (!kp.is_number()) {
+        continue;
+      }
+      keypadOrder.push_back(kp.get<int>());
+    }
+  }
   WS ws_(&event,
          site.contains("HTTP PORT") ? site["HTTP PORT"].get<int>() : 8080,
-         [&]() { return ra2.getKeypads(); },
+         [&]() { return ra2.getKeypads(keypadOrder); },
          [&](const std::string& s) { ra2.command(s); });
   ws = &ws_;
   event.loop();

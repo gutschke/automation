@@ -791,7 +791,7 @@ void RadioRA2::toggleOutput(int out) {
   }
 }
 
-std::string RadioRA2::getKeypads() {
+std::string RadioRA2::getKeypads(const std::vector<int>& order) {
   // Returns a simplified snapshot of our internal state in JSON format.
   // All strings need to be escaped first. We also remove inlined configuration
   // data that follows a ":" colon.
@@ -818,83 +818,84 @@ std::string RadioRA2::getKeypads() {
     return o.str();
   };
   std::ostringstream str;
-  str << "{";
+  str << "[";
   // Iterate over all devices, but only return information for actual keypads.
   // Most notably, this skips over the virtual buttons associated with the
   // Lutron controller itself.
-  bool firstKeypad = true;
-  for (auto device = devices_.begin(); device != devices_.end(); ++device) {
-    while (device->second.type != DEV_PICO_KEYPAD &&
-           device->second.type != DEV_SEETOUCH_KEYPAD &&
-           device->second.type != DEV_HYBRID_SEETOUCH_KEYPAD) {
-      if (++device == devices_.end()) {
-        goto allDevices;
-      }
+  // If the caller requested a particular order of keypads, enforce that now.
+  // Add any missing keypads that weren't listed already.
+  std::vector<int> ids;
+  std::copy_if(order.begin(), order.end(), back_inserter(ids),
+    [this](const int i) { return devices_.find(i) != devices_.end(); });
+  for (const auto& [ id, dev ] : devices_) {
+    if (dev.type != DEV_PICO_KEYPAD &&
+        dev.type != DEV_SEETOUCH_KEYPAD &&
+        dev.type != DEV_HYBRID_SEETOUCH_KEYPAD) {
+      continue;
     }
+    if (std::find(ids.begin(), ids.end(), id) == ids.end()) {
+      ids.push_back(id);
+    }
+  }
+  bool firstKeypad = true;
+  for (const int id : ids) {
+    const auto& dev = devices_[id];
     // Keeping track of whether to include a trailing "," comma is tedious.
     if (firstKeypad) {
       firstKeypad = false;
     } else {
       str << ",";
     }
-    const auto dev = device->second;
     // Output the name of the keypad, the LEDs and the buttons.
-    str << fmt::format("\"{}\":{{\"label\":\"{}\",\"leds\":{{",
+    str << fmt::format("{{\"id\":{},\"label\":\"{}\",\"leds\":{{",
                        dev.id, esc(dev.name));
     bool firstLed = true;
-    for (auto button = dev.components.begin(); button != dev.components.end();
-         ++button) {
-      while (button->second.led < 0) {
-        if (++button == dev.components.end()) {
-          goto allLeds;
-        }
+    for (const auto& [ _, button ] : dev.components) {
+      if (button.led < 0) {
+        continue;
       }
       if (firstLed) {
         firstLed = false;
       } else {
         str << ",";
       }
-      const auto btn = button->second;
-      str << fmt::format("\"{}\":{}", btn.id, (int)btn.ledState);
+      str << fmt::format("\"{}\":{}", button.id, (int)button.ledState);
     }
-  allLeds:
     str << "},\"buttons\":{";
-    for (auto button = dev.components.begin(); button != dev.components.end();){
-      const auto btn = button->second;
-      str << fmt::format("\"{}\":", btn.id);
+    bool firstButton = true;
+    for (const auto& [ _, button ] : dev.components) {
+      if (firstButton) {
+        firstButton = false;
+      } else {
+        str << ",";
+      }
+      str << fmt::format("\"{}\":", button.id);
       // Dimmer buttons are encoded as booleans to make them easy to
       // identify. Other buttons are stored with their label.
-      if (btn.type == BUTTON_LOWER || btn.type == BUTTON_RAISE) {
-        str << (btn.type != BUTTON_LOWER ? "true" : "false");
+      if (button.type == BUTTON_LOWER || button.type == BUTTON_RAISE) {
+        str << (button.type != BUTTON_LOWER ? "true" : "false");
       } else {
-        str << fmt::format("\"{}\"", esc(btn.name));
+        str << fmt::format("\"{}\"", esc(button.name));
       }
-      str << (++button != dev.components.end() ? "," : "");
     }
     str << "},\"dimmers\":{";
 
     bool firstDimmer = true;
-    for (auto button = dev.components.begin(); button != dev.components.end();
-         ++button) {
-      while (button->second.led < 0) {
-        if (++button == dev.components.end()) {
-          goto allDimmers;
-        }
+    for (const auto& [ _, button ] : dev.components) {
+      if (button.led < 0) {
+        continue;
       }
       if (firstDimmer) {
         firstDimmer = false;
       } else {
         str << ",";
       }
-      const auto btn = button->second;
-      const auto dimmer = getLevelForButton(btn.assignments);
-      str << fmt::format("\"{}\":{}.{:02}", btn.id, dimmer/100, dimmer%100);
+      const auto dimmer = getLevelForButton(button.assignments);
+      str << fmt::format("\"{}\":{}.{:02}", button.id, dimmer/100, dimmer%100);
     }
-  allDimmers:
     str << "}}";
   }
- allDevices:
-  str << "}";
+  str << "]";
   return str.str();
 }
 
