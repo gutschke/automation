@@ -319,6 +319,25 @@ static void dmxRemoteServer(Event& event) {
 #endif
 }
 
+static std::vector<int> keypadOrder(const json& site, const RadioRA2& ra2) {
+  // The "KEYPAD ORDER" parameter is optional and sets a prefered display
+  // order for the keypads in the web UI.
+  std::vector<int> order;
+  if (site.contains("KEYPAD ORDER")) {
+    for (const auto& kp : site["KEYPAD ORDER"]) {
+      if (kp.is_string()) {
+        int id = ra2.getKeypad(kp.get<std::string>());
+        if (id >= 0) {
+          order.push_back(id);
+        }
+      } else if (kp.is_number()) {
+        order.push_back(kp.get<int>());
+      }
+    }
+  }
+  return order;
+}
+
 static void server() {
   // Read the "site.json" file, if present. Some of the data will be needed
   // early to initialize global state. Other data will be used at a later point
@@ -367,20 +386,9 @@ static void server() {
     "",
     site.contains("USER") ? site["USER"].get<std::string>() : "",
     site.contains("PASSWORD") ? site["PASSWORD"].get<std::string>() : "");
-  // The "KEYPAD ORDER" parameter is optional and sets a prefered display
-  // order for the keypads in the web UI.
-  std::vector<int> keypadOrder;
-  if (site.contains("KEYPAD ORDER")) {
-    for (const auto& kp : site["KEYPAD ORDER"]) {
-      if (!kp.is_number()) {
-        continue;
-      }
-      keypadOrder.push_back(kp.get<int>());
-    }
-  }
   WS ws_(&event,
          site.contains("HTTP PORT") ? site["HTTP PORT"].get<int>() : 8080,
-         [&]() { return ra2.getKeypads(keypadOrder); },
+         [&]() { return ra2.getKeypads(keypadOrder(site, ra2)); },
          [&](const std::string& s) { ra2.command(s); });
   ws = &ws_;
   event.loop();

@@ -50,6 +50,11 @@ class RadioRA2 {
                std::function<void (void)> err = nullptr) {
     lutron_.command(cmd, cb, err);
   }
+  int getKeypad(const std::string& label) const {
+    auto it = std::find_if(devices_.begin(), devices_.end(),
+                    [&label](const auto& d) { return label == d.second.name; });
+    return it == devices_.end() ? -1 : it->second.id;
+  }
   std::string getKeypads(const std::vector<int>& order);
 
  private:
