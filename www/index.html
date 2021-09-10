@@ -227,7 +227,7 @@
 
       function send(s) {
         if (!socket) return;
-        console.log(s);
+        if (s) console.log(s);
         socket.send(s);
         armHeartbeatMonitor();
       }
