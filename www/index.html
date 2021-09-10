@@ -2,34 +2,82 @@
 <html>
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no,
+                                   initial-scale=1.0, maximum-scale=1.0">
     <title>Home Automation</title>
     <style>
       @charset "utf-8";
 
+      body {
+          font-family: 'Arial Condensed', 'Noto Sans', sans-serif;
+          font-size: 62.5%;
+          margin: 0px;
+      }
+
+      /* Disable carousel by default and show all keypads on the same page.   */
+      * {
+          box-sizing: border-box;
+      }
+      .viewport {
+          display: flex;
+          flex-flow: wrap;
+      }
+      .slide {
+          list-style: none;
+      }
+      .snapper {
+          margin: 2rem;
+      }
+      /* On phones, implement a carousel to switch through keypads.           */
+      @media only screen and (max-device-width: 480px) {
+        .viewport {
+            list-style: none;
+            position: absolute;
+            margin: 0px;
+            padding: 0px;
+            top: 0px;
+            right: 0px;
+            bottom: 0px;
+            left: 0px;
+            flex-flow: initial !important;
+            overflow-x: scroll;
+            scroll-snap-type: x mandatory;
+        }
+        .slide {
+            display: flex;
+            flex: 0 0 100%;
+            justify-content: center;
+            align-self: center;
+        }
+        .snapper {
+            scroll-snap-align: center;
+        }
+        /* Make scrollbars invisible.                                         */
+        * { scrollbar-color: transparent transparent; scrollbar-width: 0px; }
+        *::-webkit-scrollbar { width: 0; }
+        *::-webkit-scrollbar-track { background: transparent; }
+        *::-webkit-scrollbar-thumb { background: transparent; border: none; }
+        * { -ms-overflow-style: none; }
+      }
+
       /* Each Keypad switch is contained in a DIV that represents the wallplate.
        * We mimic the general proportions of a standard Decora wallplate.
        */
-      body {
-          font-family: Arial Narrow;
-          font-size: 62.5%;
-      }
       div.switch {
           display: inline-grid;
           grid-template-columns: 1fr;
           grid-template-rows: 1fr;
           place-items: stretch;
-          width: 5rem;
-          height: 9rem;
+          width: 9.5rem;
+          height: 13rem;
           padding: 2rem 2rem;
           border: 2px solid black;
           border-radius: 10px;
           box-shadow: 10px 10px 5px grey;
-          margin: 10px;
           user-select: none;
           overflow: clip;
       }
-      /* The actual switch is represented by an unordered list UL element.
-       */
+      /* The actual switch is represented by an unordered list UL element.    */
       div.switch > ul {
           padding: 0px;
           margin: 0px;
@@ -41,9 +89,9 @@
       div.pico > ul {
           grid: repeat(auto-fit, 1fr) / 1fr;
       }
-      /* Style individual list items LI to look like buttons
-       */
-      @property --level     { syntax: "<percentage>"; inherits: true; initial-value: 0%; }
+      /* Style individual list items LI to look like buttons                  */
+      @property --level {
+          syntax: "<percentage>"; inherits: true; initial-value: 0%; }
       div.switch > ul > li {
           list-style: none;
           grid-column-start: 1;
@@ -82,9 +130,12 @@
       /* The last row has a special button that is split in half for DOWN and UP
        */
       div.switch > ul > li.dimmer {
+          font-family: 'Noto Sans', 'Arial', sans-serif;
           display: inline-grid;
           place-items: center;
           place-self: center stretch;
+          padding: 2px;
+          color: #2080ee;
       }
       div.switch > ul > li.lower {
           grid-column-start: 1;
@@ -94,21 +145,18 @@
           grid-column-start: 2;
           grid-column-end: 3;
       }
-      /* Device buttons have an indicator LED that can turn on and off.
-       */
+      /* Device buttons have an indicator LED that can turn on and off.       */
       div.switch > ul > li:not(.noLED):before {
           content: "\26AA\A0\A0";
       }
       div.switch > ul > li.on:before {
           content: "\1F535\A0\A0";
       }
-      /* Buttons turn dark, while they are clicked.
-       */
+      /* Buttons turn dark, while they are clicked.                           */
       div.switch > ul > li.clicked {
           background-color: #888;
       }
-      /* On non-touch devices, buttons dim when the mouse moves over them.
-       */
+      /* On non-touch devices, buttons dim when the mouse moves over them.    */
       @media (hover: hover) {
         div.switch > ul > li:not(.clicked):hover {
             background-color: #eee;
@@ -278,7 +326,7 @@
         xhr.responseType = 'json';
         xhr.onload = () => {
           if (xhr.status === 200) {
-            html = '';
+            html = '<ol class="viewport">';
             for (const keypad in xhr.response) {
               // Switches are simply DIV elements containing an unordered list.
               // CSS styles encode additional data that we know about each
@@ -288,7 +336,7 @@
               const k = xhr.response[keypad];
               // As keypad with absolutely no LEDs is a Pico remote.
               const isPico = !Object.keys(k.leds).length;
-              html += `<div class="switch${
+              html += `<li class="slide"><div class="snapper switch${
                          isPico ? " pico" : ""}" id="${keypad}"><ul>`;
               for (const button in k.buttons) {
                 const isOn = k.leds[button];
@@ -326,7 +374,7 @@
                 } else if (typeof k.buttons[button] === "boolean") {
                   // The dimmer controls have a "⇓" Down or "⇑" Up button.
                   content = '<span>\u00A0';
-                  content += k.buttons[button] ? '\u21D1' : '\u21D3';
+                  content += k.buttons[button] ? '&#x25b2;' : '&#x25bc;';
                   content += '\u00A0</span>';
                 }
                 let style = '';
@@ -340,10 +388,29 @@
                 html += `<li${cls} id="${keypad}/${button}"${
                           style}>${content}</li>`;
               }
-              html += '</ul></div>';
+              html += '</ul></div></li>';
             }
-            // Set the new page contents and hook it up to Javascript
-            document.body.innerHTML = html;
+            // Set the new page contents and hook it up to Javascript.
+            document.body.innerHTML = html + '</ol>';
+
+            // On phones, resize the keypad to fill the entire screen.
+            const setZoom = function() {
+              const phone = window.matchMedia(
+                           'only screen and (max-device-width: 480px)').matches;
+              for (const el of document.getElementsByClassName('switch')) {
+                if (phone) {
+                  const w = 0.8*window.innerWidth / el.offsetWidth;
+                  const h = 0.8*window.innerHeight / el.offsetHeight;
+                  el.style.zoom = Math.min(w, h);
+                } else {
+                  el.style.zoom = 1;
+                }
+              }
+            }
+            window.onresize = setZoom;
+            setZoom();
+
+            // Make the UI active.
             monitorLEDs();
             registerButtons();
           }
