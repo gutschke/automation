@@ -5,11 +5,91 @@
 
 
 WS::WS(Event* event, int port)
-  : event_(event), keypadReq_(nullptr), cmd_(nullptr), loops_(this),
-    ctx_{0}, ops_{0}, evlib_{0}, mount_{0}, info_{0}, protocols_{0},
-    headers_{0} {
+  : event_(event), keypadReq_(nullptr), cmd_(nullptr), ctx_(nullptr),
+    protocols_ {
+      // Configure supported protocols.
+      { .name = "http",
+        .callback = lws_callback_http_dummy },
+      { .name = "internal",
+        .callback = keypadsCallback,
+        .per_session_data_size = sizeof(std::string) },
+      { .name = "ws",
+        .callback = websocketCallback,
+        .per_session_data_size = sizeof(std::string *),
+        .rx_buffer_size = 128 } },
+    headers_ {
+      // Set global options for security headers.
+      { .next = &headers_[1],
+        .name = "content-security-policy:",
+        .value = "default-src 'none'; img-src 'none'; "
+                 "script-src 'unsafe-inline'; font-src 'none'; "
+                 "style-src 'unsafe-inline'; connect-src 'self'; "
+                 "frame-ancestors 'none'; base-uri 'none'; "
+                 "form-action 'self'" },
+      { .next = &headers_[2],
+        .name = "x-content-type-options:",
+        .value = "nosniff" },
+      { .next = &headers_[3],
+        .name = "x-xss-protection:",
+        .value = "1, mode=block" },
+      { .next = &headers_[4],
+        .name = "x-frame-options:",
+        .value = "deny" },
+      { .name = "referrer-policy:",
+        .value = "no-referrer" } },
+    mount_ {
+      // Set up the mountpoint where to find static files.
+      { .mount_next = &mount_[1],
+        .mountpoint = "/",
+        .origin = "www",
+        .def = "index.html",
+        .origin_protocol = LWSMPRO_FILE,
+        .mountpoint_len = 1 },
+      { .mount_next = &mount_[2],
+        .mountpoint = errURI,
+        .def = "",
+        .protocol = "internal",
+        .origin_protocol = LWSMPRO_CALLBACK,
+        .mountpoint_len = sizeof(errURI)-1 },
+      { .mountpoint = keypadsURI,
+        .def = "",
+        .protocol = "internal",
+        .origin_protocol = LWSMPRO_CALLBACK,
+        .mountpoint_len = sizeof(keypadsURI)-1 } },
+    ops_ {
+      // Register operations allowing the HTTP handler to talk to our event loop
+      .name = "automation",
+      .init_vhost_listen_wsi = WS::accept,
+      .init_pt = WS::init,
+      .wsi_logical_close = WS::close,
+      .sock_accept = WS::accept,
+      .io = WS::io,
+      .evlib_size_pt = sizeof(WS *) },
+    evlib_ {
+      // Register as a new plugin.
+      .hdr = {
+        .name = "automation",
+        ._class = "lws_evlib_plugin",
+        .lws_build_hash = LWS_BUILD_HASH,
+        .api_magic = LWS_PLUGIN_API_MAGIC },
+      .ops = &ops_ },
+    info_ {
+      // Configure web server settings.
+      .protocols = protocols_,
+      .headers = headers_,
+      .mounts = &mount_[0],
+      .server_string = "automation",
+      .error_document_404 = errURI,
+      .port = port,
+      .ka_time = 120,
+      .ka_probes = 3,
+      .ka_interval = 30,
+      .user = this,
+      .foreign_loops = &info_.user,
+      .event_lib_custom = &evlib_ } {
   // Make our event loop compatible with what libwebsocket wants.
   loop_ = event_->addLoop([this](unsigned tmo) {
+    if (!ctx_) return;
     tmo = std::max(1u, tmo);
     unsigned newTmo = lws_service_adjust_timeout(ctx_, tmo, 0);
     if (newTmo == 0) {
@@ -23,86 +103,8 @@ WS::WS(Event* event, int port)
     }
   });
 
-  // Register operations, so that the HTTP handler can talk to our event loop.
-  ops_.name = "automation";
-  ops_.init_pt = WS::init;
-  ops_.init_vhost_listen_wsi = WS::accept;
-  ops_.sock_accept = WS::accept;
-  ops_.io = WS::io;
-  ops_.wsi_logical_close = WS::close;
-  ops_.evlib_size_pt = sizeof(WS *);
-
-  // Register as a new plugin.
-  evlib_.hdr.name = "automation";
-  evlib_.hdr._class = "lws_evlib_plugin";
-  evlib_.hdr.lws_build_hash = LWS_BUILD_HASH;
-  evlib_.hdr.api_magic = LWS_PLUGIN_API_MAGIC;
-  evlib_.ops = &ops_;
-
-  // Set up the mountpoint where to find static files.
-  mount_[0].mountpoint = "/";
-  mount_[0].mountpoint_len = 1;
-  mount_[0].origin = "www";
-  mount_[0].def = "index.html";
-  mount_[0].origin_protocol = LWSMPRO_FILE;
-  mount_[0].mount_next = &mount_[1];
-  mount_[1].mountpoint = errURI;
-  mount_[1].mountpoint_len = sizeof(errURI)-1;
-  mount_[1].def = "";
-  mount_[1].protocol = "internal";
-  mount_[1].origin_protocol = LWSMPRO_CALLBACK;
-  mount_[1].mount_next = &mount_[2];
-  mount_[2].mountpoint = keypadsURI;
-  mount_[2].mountpoint_len = sizeof(keypadsURI)-1;
-  mount_[2].def = "";
-  mount_[2].protocol = "internal";
-  mount_[2].origin_protocol = LWSMPRO_CALLBACK;
-
-  // Configure supported protocols.
-  protocols_[0].name = "http";
-  protocols_[0].callback = lws_callback_http_dummy;
-  protocols_[1].name = "internal";
-  protocols_[1].callback = keypadsCallback;
-  protocols_[1].per_session_data_size = sizeof(std::string);
-  protocols_[2].name = "ws";
-  protocols_[2].callback = websocketCallback;
-  protocols_[2].per_session_data_size = sizeof(std::string *);
-  protocols_[2].rx_buffer_size = 128;
-
-  // Set global options for security headers.
-  headers_[0].next = &headers_[1];
-  headers_[0].name = "content-security-policy:";
-  headers_[0].value = "default-src 'none'; img-src 'none'; "
-                      "script-src 'unsafe-inline'; font-src 'none'; "
-                      "style-src 'unsafe-inline'; connect-src 'self'; "
-                      "frame-ancestors 'none'; base-uri 'none'; "
-                      "form-action 'self'";
-  headers_[1].next = &headers_[2];
-  headers_[1].name = "x-content-type-options:";
-  headers_[1].value = "nosniff";
-  headers_[2].next = &headers_[3];
-  headers_[2].name = "x-xss-protection:";
-  headers_[2].value = "1; mode=block";
-  headers_[3].next = &headers_[4];
-  headers_[3].name = "x-frame-options:";
-  headers_[3].value = "deny";
-  headers_[4].name = "referrer-policy:";
-  headers_[4].value = "no-referrer";
-
-  // Configure web server settings.
-  info_.port = port;
-  info_.mounts = &mount_[0];
-  info_.error_document_404 = errURI;
-  info_.headers = headers_;
-  info_.protocols = protocols_;
-  info_.event_lib_custom = &evlib_;
-  info_.foreign_loops = &loops_;
-  info_.ka_time = 120;
-  info_.ka_probes = 3;
-  info_.ka_interval = 30;
-  info_.user = this;
-
-  // Now we are ready to create the web server.
+  // Now we are ready to create the web server. All the hard work happened in
+  // the designated initializers.
   lws_create_context(&info_);
 }
 
