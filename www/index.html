@@ -390,25 +390,8 @@
         return div.innerHTML;
       }
 
-      rollingAvg = (() => {
-        const windowSize = 200;
-        let samples = [];
-        return (x) => {
-          const now = Date.now();
-          samples.push([ now, x ]);
-          while (now - samples[0][0] > windowSize) {
-            samples.shift();
-          }
-          let avg = 0;
-          let total = 0;
-          for (const data of samples) {
-            const weight = Math.pow(1.0 - (now - data[0])/windowSize, 3);
-            avg += weight * data[1];
-            total += weight;
-          }
-          return avg / total;
-        }; })();
-
+      let phone = window.matchMedia(
+                 'only screen and (pointer: coarse) and (hover: none)').matches;
       function main() {
         // Request the list of keypads so that we can dynamically populate
         // the HTML page with switches.
@@ -489,8 +472,6 @@
 
             // On phones, resize the keypad to fill the entire screen.
             const setZoom = function() {
-              const phone = window.matchMedia(
-                 'only screen and (pointer: coarse) and (hover: none)').matches;
               for (const el of document.getElementsByClassName('switch')) {
                 if (phone) {
                   const w = 0.8*window.innerWidth / el.offsetWidth;
@@ -505,119 +486,142 @@
             setZoom();
 
             // Enable infinite scrolling in the carousel.
-            (() => {
-              const viewport = document.getElementsByClassName('viewport')[0];
-              const childWidth = viewport.scrollWidth/viewport.children.length;
-              const range = viewport.lastElementChild.offsetLeft;
-              let velocity = 0;
-              let now = Date.now();
-              let pos = viewport.scrollLeft;
-              let target, tt, st, s0;
-              let animationFrame, tmo;
-              const scroll =
-              viewport.onscroll = (ev) => {
-                // Determine current position, velocity, and acceleration.
-                const dx = viewport.scrollLeft - pos;
-                const dt = Math.max(1, Date.now() - now);
-                const dv = rollingAvg(dx/dt) - velocity;
-                velocity += dv;
-                now += dt;
-                pos += dx;
-                // Disable all interactions with the UI until scrolling stops.
-                clearTimeout(tmo);
-                noclick = true;
-                tmo = setTimeout(() => {tmo = undefined; noclick = false;},150);
-                // Always make sure there are elements on both sides of our
-                // current element, so we can scroll in either direction.
-                // We don't bother implementing an infinite carousel, if there
-                // are only two or fewer keypads.
-                if (viewport.childNodes.length > 2) {
-                  let delta = undefined;
-                  if (pos < 0.4*range) {
-                    delta = Math.round(childWidth);
-                    viewport.insertBefore(viewport.lastElementChild,
-                                          viewport.firstElementChild);
-                  } else if (pos > 0.6*range) {
-                    delta = -Math.round(childWidth);
-                    viewport.appendChild(viewport.firstElementChild);
-                  }
-                  if (delta) {
-                    pos += delta;
-                    if (target !== undefined) target += delta;
-                    if (s0 !== undefined) s0 += delta;
-                    viewport.scrollTo(pos, 0);
-                  }
-                }
-                // The browser's CSS-based snap scrolling interferes badly with
-                // rearranging elements. So, implement our own version instead.
-                // Guess the next target based on how close we are to the next
-                // snap position in the direction that we are moving. If we
-                // overshot less than 15%, stay at the current target.
-                const ttarget =
-                      Math.round((Math.trunc(
-                        (pos-0.15*childWidth*Math.sign(velocity))/childWidth) +
-                        (Math.sign(velocity) > 0))*childWidth);
-                // Determine some reasonable target time when we want to
-                // arrive that the next snap position. This depends on the
-                // current velocity, but it also gets adjusted to a minimum
-                // speed that makes it snap in a reasonable amount of time,
-                // if we still have a long way to go.
-                const ttt = now + Math.min(50,
-                                           Math.abs((ttarget - pos)/velocity));
-                // Decide whether we should actively adjust the scroll position
-                // or just go with whatever the browser is doing right now.
-                if (dv * Math.sign(velocity) < 0 ||
-                    (target !== undefined && ttarget !== target)) {
-                  // The rate of scrolling is slowing down, or we already
-                  // overshot the previous target. Look for a snap target now.
-                  target = ttarget;
-                  tt = ttt;
-                  st = now;
-                  s0 = pos;
-                } else if (Math.abs(velocity) >
-                           Math.abs((target - pos)/(tt - now))) {
-                  // Already moving faster than needed to reach the target.
-                  // Disable snapping until user slows down.
-                  target = undefined;
-                  tt = undefined;
-                }
-                // If we the target time has been pushed out, remember that
-                // change.
-                if (target && ttt > tt) {
-                  tt = ttt;
-                  st = now;
-                  s0 = pos;
-                }
-                // If we have a current target that we are aiming for, start
-                // the animation.
-                if (animationFrame && !target) {
-                  cancelAnimationFrame(animationFrame);
-                  animationFrame = undefined;
-                } else if (!animationFrame && target) {
-                  const anim = () => {
-                    animationFrame = undefined;
-                    const when = Date.now();
-                    if (when >= tt) {
-                      // We have reached or exceeded the target time. Snap
-                      // to the final position.
-                      viewport.scrollTo(target, 0);
-                      target = undefined;
-                    } else {
-                      // Gradually approach the target.
-                      const p = Math.min(1, Math.max(0,
-                                         Math.pow((when - st)/(tt - st), 0.7)));
-                      let x = (target - s0)*p + s0;
-                      if ((x - viewport.scrollLeft)*Math.sign(velocity) > 0) {
-                        viewport.scrollTo(x, 0);
-                      }
-                      animationFrame = window.requestAnimationFrame(anim);
+            if (phone) {
+              (() => {
+                rollingAvg = (() => {
+                  const windowSize = 200;
+                  let samples = [];
+                  return (x) => {
+                    const now = Date.now();
+                    samples.push([ now, x ]);
+                    while (now - samples[0][0] > windowSize) {
+                      samples.shift();
                     }
-                  };
-                  animationFrame = window.requestAnimationFrame(anim);
-                }
-              };
-              scroll();
-            })();
+                    let avg = 0;
+                    let total = 0;
+                    for (const data of samples) {
+                      const weight = Math.pow(1.0-(now-data[0])/windowSize, 3);
+                      avg += weight * data[1];
+                      total += weight;
+                    }
+                    return avg / total;
+                  }; })();
+
+                const viewport = document.getElementsByClassName('viewport')[0];
+                const childWidth =viewport.scrollWidth/viewport.children.length;
+                const range = viewport.lastElementChild.offsetLeft;
+                let velocity = 0;
+                let now = Date.now();
+                let pos = viewport.scrollLeft;
+                let target, tt, st, s0;
+                let animationFrame, tmo;
+                const scroll =
+                viewport.onscroll = (ev) => {
+                  // Determine current position, velocity, and acceleration.
+                  const dx = viewport.scrollLeft - pos;
+                  const dt = Math.max(1, Date.now() - now);
+                  const dv = rollingAvg(dx/dt) - velocity;
+                  velocity += dv;
+                  now += dt;
+                  pos += dx;
+                  // Disable all interactions with the UI until scrolling stops.
+                  clearTimeout(tmo);
+                  noclick = true;
+                  tmo = setTimeout(() => {tmo=undefined; noclick=false;}, 150);
+                  // Always make sure there are elements on both sides of our
+                  // current element, so we can scroll in either direction.
+                  // We don't bother implementing an infinite carousel, if there
+                  // are only two or fewer keypads.
+                  if (viewport.childNodes.length > 2) {
+                    let delta = undefined;
+                    if (pos < 0.4*range) {
+                      delta = Math.round(childWidth);
+                      viewport.insertBefore(viewport.lastElementChild,
+                                            viewport.firstElementChild);
+                    } else if (pos > 0.6*range) {
+                      delta = -Math.round(childWidth);
+                      viewport.appendChild(viewport.firstElementChild);
+                    }
+                    if (delta) {
+                      pos += delta;
+                      if (target !== undefined) target += delta;
+                      if (s0 !== undefined) s0 += delta;
+                      viewport.scrollTo(pos, 0);
+                    }
+                  }
+                  // The browser's CSS-based snap scrolling interferes badly
+                  // with rearranging elements. So, implement our own version
+                  // instead.
+                  // Guess the next target based on how close we are to the next
+                  // snap position in the direction that we are moving. If we
+                  // overshot less than 15%, stay at the current target.
+                  const ttarget =
+                        Math.round((Math.trunc(
+                         (pos-0.15*childWidth*Math.sign(velocity))/childWidth) +
+                         (Math.sign(velocity) > 0))*childWidth);
+                  // Determine some reasonable target time when we want to
+                  // arrive that the next snap position. This depends on the
+                  // current velocity, but it also gets adjusted to a minimum
+                  // speed that makes it snap in a reasonable amount of time,
+                  // if we still have a long way to go.
+                  const ttt = now + Math.min(50,
+                                             Math.abs((ttarget-pos)/velocity));
+                  // Decide whether we should actively adjust the scroll
+                  // position or just go with whatever the browser is doing
+                  // right now.
+                  if (dv * Math.sign(velocity) < 0 ||
+                      (target !== undefined && ttarget !== target)) {
+                    // The rate of scrolling is slowing down, or we already
+                    // overshot the previous target. Look for a snap target now.
+                    target = ttarget;
+                    tt = ttt;
+                    st = now;
+                    s0 = pos;
+                  } else if (Math.abs(velocity) >
+                             Math.abs((target - pos)/(tt - now))) {
+                    // Already moving faster than needed to reach the target.
+                    // Disable snapping until user slows down.
+                    target = undefined;
+                    tt = undefined;
+                  }
+                  // If we the target time has been pushed out, remember that
+                  // change.
+                  if (target && ttt > tt) {
+                    tt = ttt;
+                    st = now;
+                    s0 = pos;
+                  }
+                  // If we have a current target that we are aiming for, start
+                  // the animation.
+                  if (animationFrame && !target) {
+                    cancelAnimationFrame(animationFrame);
+                    animationFrame = undefined;
+                  } else if (!animationFrame && target) {
+                    const anim = () => {
+                      animationFrame = undefined;
+                      const when = Date.now();
+                      if (when >= tt) {
+                        // We have reached or exceeded the target time. Snap
+                        // to the final position.
+                        viewport.scrollTo(target, 0);
+                        target = undefined;
+                      } else {
+                        // Gradually approach the target.
+                        const p = Math.min(1, Math.max(0,
+                                           Math.pow((when-st)/(tt-st), 0.7)));
+                        let x = (target - s0)*p + s0;
+                        if ((x - viewport.scrollLeft)*Math.sign(velocity) > 0) {
+                          viewport.scrollTo(x, 0);
+                        }
+                        animationFrame = window.requestAnimationFrame(anim);
+                      }
+                    };
+                    animationFrame = window.requestAnimationFrame(anim);
+                  }
+                };
+                scroll();
+              })();
+            }
 
             // Make the UI active.
             monitorLEDs();
