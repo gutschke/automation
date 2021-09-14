@@ -22,22 +22,26 @@
           display: flex;
           flex-flow: wrap;
       }
+      .jumptokeypad {
+          display: none;
+      }
+
       .slide {
           list-style: none;
       }
-      .snapper {
-          margin: 2rem;
-      }
       /* On phones, implement a carousel to switch through keypads.           */
       @media only screen and (pointer: coarse) and (hover: none) {
+        body {
+            height: 100%;
+        }
         .viewport {
             list-style: none;
-            position: absolute;
+            position: fixed;
             margin: 0px;
             padding: 0px;
+            height: 100%;
             top: 0px;
             right: 0px;
-            bottom: 0px;
             left: 0px;
             flex-flow: initial !important;
             overflow-x: scroll;
@@ -48,9 +52,27 @@
             justify-content: center;
             align-self: center;
         }
-        .snapper {
+        .switch {
             scroll-snap-align: center;
             margin: 0px ! important;
+        }
+        /* Pop up menu to quickly select a keypad to jump to                  */
+        .jumptokeypad {
+            list-style: none;
+            position: absolute;
+            padding: 0px;
+            margin: 0px;
+            width: 100vw;
+            height: 100%;
+            z-index: 100;
+            overflow: clip scroll;
+            font-size: x-large;
+        }
+        .jumptokeypad > li {
+            width: 100%;
+            height: 100%;
+            display: inline-grid;
+            place-content: center;
         }
         /* Make scrollbars invisible.                                         */
         * { scrollbar-color: transparent transparent; scrollbar-width: 0px; }
@@ -71,6 +93,7 @@
           width: 9.5rem;
           height: 13rem;
           padding: 2rem 2rem;
+          margin: 2rem;
           border: 2px solid black;
           border-radius: 10px;
           box-shadow: 10px 10px 5px grey;
@@ -317,6 +340,22 @@
             li.onpointerenter = (e) => mouseenter(e, elem, swid, component);
             li.onpointerleave = (e) => mouseleave(e, elem, swid, component);
           }
+          sw.getElementsByClassName('label')[0].firstChild.onclick=openJumpMenu;
+        }
+        // On phones, set up a quick way to jump to a specific keypad.
+        const viewport = document.getElementsByClassName('viewport')[0];
+        const jumptokeypad = document.getElementsByClassName('jumptokeypad')[0];
+        for (const jmp of jumptokeypad.childNodes) {
+          jmp.onclick = (ev) => {
+            const id = ev.target.id || ev.target.parentNode.id;
+            for (const kp of viewport.childNodes) {
+              if (kp.firstElementChild.id == id) {
+                viewport.scrollLeft = kp.offsetLeft;
+                jumptokeypad.style.display = null;
+                break;
+              }
+            }
+          };
         }
         // Make sure we always notice when the mouse button is released.
         document.getElementsByTagName('BODY')[0].onmouseup = (e) => mouseup(e);
@@ -382,6 +421,21 @@
         if (clickTarget && elem === clickTarget.elem) {
           elem.classList.remove('clicked');
         }
+      }
+
+      function openJumpMenu() {
+        if (!phone) {
+          return;
+        }
+        const jumptokeypad = document.getElementsByClassName('jumptokeypad')[0];
+        const viewport = document.getElementsByClassName('viewport')[0];
+        const childWidth = viewport.scrollWidth / viewport.children.length;
+        const id = viewport.childNodes[Math.trunc((viewport.scrollLeft +
+                                   0.1*childWidth) / childWidth)].firstChild.id;
+        for (const child of jumptokeypad.childNodes) {
+          child.style.background = child.id == id ? '#eee' : 'white';
+        }
+        document.getElementsByClassName('jumptokeypad')[0].style.display='grid';
       }
 
       function infiniteScroll() {
@@ -552,7 +606,7 @@
               // doesn't have dimmer controls nor LEDs).
               // A keypad with absolutely no LEDs is a Pico remote.
               const isPico = !Object.keys(k.leds).length;
-              html += `<li class="slide"><div class="snapper switch${
+              html += `<li class="slide"><div class="switch${
                          isPico ? ' pico' : ''}" id="${k.id}"><ul>`;
               for (const button in k.buttons) {
                 const isOn = k.leds[button];
@@ -608,7 +662,12 @@
                        escapeHTML(k.label)}</b></span></div></li>`;
             }
             // Set the new page contents and hook it up to Javascript.
-            document.body.innerHTML = html + '</ol>';
+            html += '</ol><ol class="jumptokeypad">';
+            for (const k of xhr.response) {
+              html += `<li id="${k.id}"><span>${
+                                        escapeHTML(k.label)}</span></li>`;
+            }
+            document.body.innerHTML = html + '</ol>'
 
             // On phones, resize the keypad to fill the entire screen.
             const setZoom = function() {
