@@ -21,6 +21,7 @@
 namespace Util {
   unsigned int millis();
   unsigned int micros();
+  unsigned int timeOfDay();
 
   inline std::string trim(const std::string& s) {
     auto wsfront = std::find_if_not(s.begin(), s.end(),

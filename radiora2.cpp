@@ -900,7 +900,7 @@ void RadioRA2::suppressLutronDimmer(int id, bool mode) {
   // for a little longer.
   if (mode) {
     suppressDummyDimmer_.insert(id);
-  } else {
+  } else if (suppressDummyDimmer_.find(id) != suppressDummyDimmer_.end()) {
     suppressDummyDimmer_.erase(id);
     releaseDummyDimmer_[id] = Util::millis() + 200;
   }

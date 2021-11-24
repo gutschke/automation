@@ -72,7 +72,7 @@ static void readLine(RadioRA2& ra2, DMX& dmx, Relay& relay,
     if (!memcmp(",1,", comma, 3)) {
       // Check whether the "context" references a DMX load.
       auto args = context.find(':');
-      if (args != std::string::npos && context[++args] == '[') {
+      if (args != std::string::npos) {
         // Lutron outputs the level as a number in the range 0..100 with two
         // decimals precision. Convert it to an integer in the range 0..10000.
         int level = 100*atoi(comma + 3);
@@ -83,9 +83,31 @@ static void readLine(RadioRA2& ra2, DMX& dmx, Relay& relay,
             level += decimal[2] - '0';
           }
         }
-        DBG("Found in-line DMX info");
-        setDMX(dmx, json::parse("[" + context.substr(args) + "]"),
-               std::min(std::max(0, level), 10000), fade);
+        if (context[args + 1] == '[') {
+          DBG("Found in-line DMX info");
+          setDMX(dmx, json::parse("[" + context.substr(args + 1) + "]"),
+                 std::min(std::max(0, level), 10000), fade);
+        } else if (initialized) {
+          // Some dimmers are supposed to be darker at night and brighter
+          // during the day. A ":<low>/<high>/<from>-<to>" parameter can
+          // override the Lutron defaults.
+          char *endptr;
+          errno = 0;
+          auto low  = strtol(&context[args + 1], &endptr, 0);
+          auto hi   = strtol(*endptr ? endptr + 1 : "", &endptr, 0);
+          auto from = strtol(*endptr ? endptr + 1 : "", &endptr, 0);
+          auto to   = strtol(*endptr ? endptr + 1 : "", &endptr, 0);
+          if (!errno && low >= 0 && low <= 100 && hi >= 0 && hi <= 100 &&
+              from >= 0 && from <= 2400 && to >= 0 && to <= 2400 &&
+              level > 150 && abs(level - low*100) < 200 &&
+              abs(level - hi*100) > 250) {
+            int now = Util::timeOfDay();
+            if ((now >= from && now < to) == (to > from)) {
+              ra2.command(fmt::format("#OUTPUT,{},1,{}.00",
+                                     std::string(line, 8, comma-&line[8]), hi));
+            }
+          }
+        }
       }
     }
   } else if (Util::starts_with(line, "~DEVICE,") &&
