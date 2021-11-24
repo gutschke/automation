@@ -99,12 +99,17 @@ static void readLine(RadioRA2& ra2, DMX& dmx, Relay& relay,
           auto to   = strtol(*endptr ? endptr + 1 : "", &endptr, 0);
           if (!errno && low >= 0 && low <= 100 && hi >= 0 && hi <= 100 &&
               from >= 0 && from <= 2400 && to >= 0 && to <= 2400 &&
-              level > 150 && abs(level - low*100) < 200 &&
-              abs(level - hi*100) > 250) {
+              level > 150 && abs(level - hi*100) > 250 &&
+              (abs(level - low*100) < 200 || level - 750 < low*100)) {
             int now = Util::timeOfDay();
             if ((now >= from && now < to) == (to > from)) {
-              ra2.command(fmt::format("#OUTPUT,{},1,{}.00",
-                                     std::string(line, 8, comma-&line[8]), hi));
+              static std::map<int, int> suppress;
+              int id = atoi(std::string(line, 8, comma-&line[8]).c_str());
+              const auto it = suppress.find(id);
+              if (it == suppress.end() || Util::millis() - it->second > 2000) {
+                ra2.command(fmt::format("#OUTPUT,{},1,{}.00", id, hi));
+              }
+              suppress[id] = Util::millis();
             }
           }
         }
