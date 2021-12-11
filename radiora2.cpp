@@ -768,7 +768,8 @@ void RadioRA2::addToButton(int kp, int bt, int id, int level, bool makeToggle) {
       devices_[kp].components[bt].type = BUTTON_TOGGLE;
     }
   }
-  devices_[kp].components[bt].assignments.push_back(Assignment{id, level*100});
+  devices_[kp].components[bt].assignments.push_back(
+    Assignment{id, level == -1 ? -1 : level*100});
 }
 
 void RadioRA2::toggleOutput(int out) {
@@ -935,7 +936,7 @@ void RadioRA2::setDMXorLutron(int id, int level, bool fade, bool suppress,
     }
     auto& out = namedOutput_[-id-1];
     if (out.level != level) {
-      out.level = level;
+      out.level = std::min(10000, std::max(0, level));
       out.cb(level, fade);
     }
     broadcastDimmerChanges(id);
@@ -989,13 +990,17 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
     // Toggle switches between on and off for all devices in this assignments.
     bool on = false;
     for (const auto& as : button.assignments) {
+      if (as.level == -1) {
+        // Relays don't have an on/off state; they always toggle when activated.
+        continue;
+      }
       on |= getCurrentLevel(as.id) > 0;
     }
     // Aliased outputs that refer to DMX fixtures have to be set by us, each
     // time a button is pressed.
     for (const auto& as : button.assignments) {
       if (as.id < 0) {
-        setDMXorLutron(as.id, on ? 0 : as.level, true);
+        setDMXorLutron(as.id, as.level == -1 ? -1 : on ? 0 : as.level, true);
       }
     }
     break; }
@@ -1041,6 +1046,10 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
         if (as.id < 0) {
           // DMX dimmer configured in "site.json".
           if (-as.id <= (int)namedOutput_.size()) {
+            if (as.level == -1) {
+              // This is a relay. Don't even try to dim it.
+              continue;
+            }
             level = namedOutput_[-as.id-1].level;
           }
         } else {

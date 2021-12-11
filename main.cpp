@@ -297,7 +297,7 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
                     if (condPin < 0 || relay.get(condPin) == sense) {
                       relay.toggle(actionPin);
                     }
-                  }), 0);
+                  }), -1);
             } else {
               DBG("Cannot parse GPIO rule");
             }

@@ -45,7 +45,8 @@ bool Relay::get(int pin) {
     // directly programming the chipset registers. But instead, we rely on
     // an external helper program.
     configured_.insert(pin);
-    if (system(fmt::format("{} mode {} down", helper_, pin).c_str()));
+    if (system(fmt::format("{} mode {} input", helper_, pin).c_str()));
+    if (system(fmt::format("{} mode {} up", helper_, pin).c_str()));
   }
   struct gpiohandle_request req = { };
   req.lineoffsets[0] = pin;
