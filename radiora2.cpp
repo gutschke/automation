@@ -93,7 +93,7 @@ void RadioRA2::readLine(const std::string& line) {
   if (!line.size()) {
     return;
   }
-  DBG("Read line: \"" << line << "\"");
+  DBGc(2, "Read line: \"" << line << "\"");
   bool suppressed = false;
   std::string context;
   // Received an update about a device. We are primarily interested in LEDs

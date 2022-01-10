@@ -6,15 +6,23 @@
 #include <string>
 
 #if defined(NDEBUG)
-#define DBG(x) do { } while (0)
+#define DBG(x)     do { } while (0)
+#define DBGc(c, x) do { } while (0)
 #else
+extern "C" {
+  int isatty(int);
+}
 #include <fmt/format.h>
 #include <iostream>
-#define DBG(x) do { \
+#define DBGc(c, x) do { \
+    static const bool tty = isatty(2); \
     unsigned ts = Util::dt(); \
-    std::cerr << fmt::format("{:3}.{:03}: ", ts/1000, ts%1000) <<  x \
+    std::cerr << fmt::format("{:3}.{:03}: ", ts/1000, ts%1000) \
+              << fmt::format((tty && c) ? "\x1B[{}m" : "", 30 + c) << x \
+              << ((tty && c) ? "\x1B[m" : "") \
               << std::endl; \
   } while (0)
+#define DBG(x) DBGc(0, x)
 #endif
 
 

@@ -327,7 +327,7 @@ void Lutron::sendData(const std::string& data,
           event_.addPollFd(sock_, POLLOUT, [=, this](auto) {
             event_.removePollFd(sock_);
             atPrompt_ = false;
-            DBG("write(\"" << Util::trim(data) << "\")");
+            DBGc(1, "write(\"" << Util::trim(data) << "\")");
             const auto rc = write(sock_, data.c_str(), data.size());
             if (rc <= 0) {
               // Failed to write any data.
