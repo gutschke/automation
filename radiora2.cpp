@@ -3,6 +3,7 @@
 #include <locale.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <fmt/format.h>
@@ -203,7 +204,28 @@ void RadioRA2::readLine(const std::string& line) {
         }
       }
     }
+  } else if (Util::starts_with(line, "~SYSTEM,1,")) {
+    // When the controller tells us the system time, compare it to our own
+    // understanding of time. If there is a significant difference, we can
+    // adjust the time as needed.
+    unsigned char h, m, s;
+    if (sscanf(line.c_str() + 10, "%2hhu:%2hhu:%2hhu%*c", &h, &m, &s) != 3) {
+      DBG("Cannot parse time string");
+    } else {
+      time_t ti = time(NULL);
+      struct tm tm;
+      localtime_r(&ti, &tm);
+      unsigned d = ((s + 60*(m + 60*(unsigned)h)) + 86400 -
+                    (tm.tm_sec + 60*(tm.tm_min + 60*tm.tm_hour))) % 86400;
+      if (d >= 43200) d = 86400 - d;
+      if (d > 3) {
+        DBG("Time has drifted " << d << " seconds");
+        command(fmt::format("#SYSTEM,1,{:02}:{:02}:{:02}",
+                            tm.tm_hour, tm.tm_min, tm.tm_sec));
+      }
+    }
   }
+
   // A short while after the last update, we recompute all LEDs.
   if (recompute_ || !lutron_.commandPending()) {
     event_.removeTimeout(recompute_);
