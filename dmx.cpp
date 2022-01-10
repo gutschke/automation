@@ -80,10 +80,11 @@ void DMX::set(int idx, int val, bool fade) {
   // We keep track of the desired nominal output level in "values_", but
   // slowly approach this number by adjusting the "phys_" setting.
   fadeTime_ = std::max(1, FADE_TMO*abs(values_[idx] - val)/255);
+  DBG("fadeTime = " << fadeTime_);
   values_[idx] = val;
   if (!fade
 #if !defined(NDEBUG)
-      || (dmxsrv && !*dmxsrv)
+      || (dmxsrv && !*dmxsrv && abs(phys_[idx] - val) <= 30)
  #endif
       ) {
     phys_[idx] = val;
@@ -161,6 +162,7 @@ void DMX::sendPacket() {
     }
     Serial::brk(fd_);
     if (write(fd_, phys_.data(), phys_.size()) != (ssize_t)phys_.size()) {
+      DBG("Write error on serial port");
       close(fd_);
       fd_ = -1;
     }

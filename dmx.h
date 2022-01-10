@@ -13,7 +13,7 @@ class DMX {
   void set(int idx, int val, bool fade = true);
 
  private:
-  static const int FADE_TMO = 100;
+  static const int FADE_TMO = 250;
 
   void refresh(unsigned when = 1);
   void sendPacket();
