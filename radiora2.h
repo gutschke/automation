@@ -42,6 +42,8 @@ class RadioRA2 {
   RadioRA2& onheartbeat(std::function<void ()> hb) { hb_ = hb; return *this; }
   RadioRA2& onschemainvalid(std::function<void ()> schemaInvalid) {
     schemaInvalid_ = schemaInvalid; return *this; }
+  void addButtonListener(int kp, int bt,
+        std::function<void (int kp, int bt, bool on, bool isLong, int num)> cb);
   int addOutput(const std::string name, std::function<void (int, bool)> cb);
   void addToButton(int kp, int bt, int id, int level, bool makeToggle = false);
   void toggleOutput(int out);
@@ -202,6 +204,7 @@ class RadioRA2 {
     std::vector<Assignment> assignments;
     bool                    ledState;
     bool                    uncertain;
+    std::vector<std::function<void (int, int, bool, bool, int)>>listeners;
   };
 
   struct Device {
@@ -225,12 +228,18 @@ class RadioRA2 {
     // the button has been released. That's very jarring for the user. So, we
     // need to go to some effort to replicate Lutron's native behavior for the
     // integrated DMX devices.
+    // We do similar but much more limited processing for button events when
+    // non-dimmer buttons are pressed. This isn't needed for any of the core
+    // features, but it allows us to forward richer status information to
+    // external scripts, which can change behavior based on double-taps.
     int                      lastButton;
     int                      dimDirection;
     int                      startOfDim;
     int                      firstTap;
     int                      numTaps;
+    int                      released;
     std::map<int, int>       startingLevels;
+    bool                     on;
   };
 
   struct Output {

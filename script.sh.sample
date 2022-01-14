@@ -1,0 +1,28 @@
+#!/bin/bash
+
+if [ -z "${NUMTAPS}" ]; then
+  # If we only care about single button presses, then we can achieve the lowest
+  # latency by immediately responding as soon as the button has been pressed.
+  #
+  # Also, for dimmer buttons, there currently is no reporting of double taps.
+  # So, they should be handled here.
+  case "${KEYPAD}:${BUTTON}" in
+    *) echo "Keypad: ${KEYPAD}, button: ${BUTTON} pressed" >&2
+       ;;
+  esac
+else
+  # We get notified of double-taps for regular keypad buttons and Pico remotes.
+  # If this is information we need, then we should parse events here. But
+  # that comes at the extra latency cost of having to wait until the user
+  # stops tapping the button.
+  case "${KEYPAD}:${BUTTON}" in
+    *) echo "Keypad: ${KEYPAD}, button: ${BUTTON} pressed ${NUMTAPS} times$(
+             if [ -n "${LONG}" ]; then echo ", long press detected"; fi)" >&2
+       ;;
+  esac
+fi
+[ -n "${ON}" ] && echo "The output is currently on" >&2
+
+# Any command that is echo'd to stdout will be forward to the Lutron main
+# repeater. The following is a no-op. It's just here as an example
+echo "?SYSTEM,1"

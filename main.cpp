@@ -252,6 +252,32 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
                   ra2.command(fmt::format("#DEVICE,{},{},3",otherKp,otherBt));
                   ra2.command(fmt::format("#DEVICE,{},{},4",otherKp,otherBt));
                 }), 0);
+          } else if (at == "SCRIPT") {
+            // Sometimes, none of the built-in rules can do the job. Branch out
+            // to a helper script instead.
+            auto script = rule.get<std::string>();
+            if (!script.empty()) {
+              ra2.addButtonListener(
+                atoi(kp.c_str()), atoi(bt.c_str()),
+                [script, &ra2](int kp, int bt, bool on, bool isLong, int num) {
+                  setenv("KEYPAD",  fmt::format("{}", kp).c_str(), 1);
+                  setenv("BUTTON",  fmt::format("{}", bt).c_str(), 1);
+                  setenv("ON",      fmt::format("{}", on).c_str(), 1);
+                  if (isLong) setenv("LONG", "1", 1);
+                  else      unsetenv("LONG");
+                  if (num) setenv("NUMTAPS", fmt::format("{}", num).c_str(), 1);
+                  else   unsetenv("NUMTAPS");
+                  FILE *fd = popen(script.c_str(), "r");
+                  char *line = nullptr;
+                  size_t len;
+                  while (fd >= 0 && (len = 0, getline(&line, &len, fd)) >= 0) {
+                    ra2.command(Util::trim(line));
+                    free(line);
+                    line = nullptr;
+                  }
+                  free(line);
+                });
+            }
           } else if (at == "RELAY" && site.contains("GPIO")) {
             // We can control GPIO inputs and outputs that frequently have
             // relays attached. Currently, only momentary push buttons are

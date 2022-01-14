@@ -742,6 +742,17 @@ void RadioRA2::recomputeLEDs() {
   }
 }
 
+void RadioRA2::addButtonListener(int kp, int bt,
+                           std::function<void (int, int, bool, bool, int)> cb) {
+  const auto dev = devices_.find(kp);
+  if (dev != devices_.end()) {
+    const auto keypad = dev->second.components.find(bt);
+    if (keypad != dev->second.components.end()) {
+      keypad->second.listeners.push_back(cb);
+    }
+  }
+}
+
 int RadioRA2::addOutput(const std::string name,
                         std::function<void (int, bool)> cb) {
   // Returns a previously registered virtual output device that is identified
@@ -995,47 +1006,103 @@ void RadioRA2::setDMXorLutron(int id, int level, bool fade, bool suppress,
 
 void RadioRA2::buttonPressed(Device& keypad, Component& button,
                              bool isReleased) {
+  const auto now = Util::millis();
+
+  // Invoke any listeners that are interested in this button (if any).
+  if (!isReleased) {
+    for (const auto& listener : button.listeners) {
+      listener(keypad.id, button.id, false, false, 0);
+    }
+  }
+
+  // Detect double and long presses, where possible, and provide this
+  // information to any listeners. This is currently only implement for the
+  // main buttons on keypads (not for dimmer buttons) and for Pico buttons.
+  // It is intended to be used by external helper scripts that trigger more
+  // complex functions.
+  if (button.type == BUTTON_TOGGLE ||
+      button.type == BUTTON_ADVANCED_TOGGLE ||
+      button.type == BUTTON_SINGLE_ACTION) {
+    // RadioRA2 doesn't send "release" events for regular keypad buttons.
+    // It only does so for the dimmer buttons on the keypad.
+    // On the other hand, for Pico remotes, it is possible to track long
+    // button presses.
+    if (keypad.dimDirection || keypad.lastButton != button.id ||
+        keypad.firstTap == 0) {
+      keypad.lastButton = button.id;
+      keypad.dimDirection = 0;
+      keypad.startOfDim = now;
+      keypad.firstTap = now;
+      keypad.numTaps = 1;
+      keypad.on = false;
+    } else {
+      DBGc(5, "DELAY IS " << now - keypad.startOfDim << "MS");
+      if (!isReleased) {
+        keypad.numTaps++;
+      }
+      keypad.startOfDim = now;
+    }
+    if (isReleased) {
+      keypad.released = now;
+    } else {
+      keypad.released = 0;
+    }
+
+    event_.addTimeout(
+      // If this event included a release event, we can make a more reasonable
+      // guess for how long to wait.
+      isReleased
+        ? std::max(300u, std::min(DOUBLETAP/2,
+                                  (now - keypad.startOfDim)*3/2))
+        : keypad.type == DEV_PICO_KEYPAD
+        ? DOUBLETAP/2
+        : DOUBLETAP*3/4,
+      [this, firstTap = keypad.firstTap, startOfDim = keypad.startOfDim,
+       numTaps = keypad.numTaps, rel = keypad.released, &keypad, &button]() {
+        if (firstTap != keypad.firstTap || numTaps != keypad.numTaps ||
+            rel != keypad.released) {
+          // There have been more taps since. Ignore this callback.
+          return;
+        }
+        // Sufficient time has past since the last button event. We
+        // are certain we now have this type of button press identified.
+        bool isLong = keypad.type == DEV_PICO_KEYPAD && !rel;
+        keypad.numTaps = 0;
+        keypad.firstTap = 0;
+        for (const auto& listener : button.listeners) {
+          listener(keypad.id, button.id, keypad.on, isLong, numTaps);
+        }
+      });
+  }
+
   // Replicate the same logic that Lutron does for button presses, but
   // apply it to non-Lutron virtual outputs (e.g. DMX fixtures).
   switch (button.type) {
   // Toggle control / Room monitoring
   case BUTTON_TOGGLE:
   case BUTTON_ADVANCED_TOGGLE: {
-    keypad.dimDirection = 0;
-    keypad.startOfDim = 0;
-    keypad.firstTap = 0;
-    keypad.lastButton = button.id;
-
-    if (isReleased) {
-      return;
-    }
     // Toggle switches between on and off for all devices in this assignments.
-    bool on = false;
+    keypad.on = false;
     for (const auto& as : button.assignments) {
       if (as.level == -1) {
         // Relays don't have an on/off state; they always toggle when activated.
         continue;
       }
-      on |= getCurrentLevel(as.id) > 0;
+      keypad.on |= getCurrentLevel(as.id) > 0;
     }
     // Aliased outputs that refer to DMX fixtures have to be set by us, each
     // time a button is pressed.
     for (const auto& as : button.assignments) {
       if (as.id < 0) {
-        setDMXorLutron(as.id, as.level == -1 ? -1 : on ? 0 : as.level, true);
+        setDMXorLutron(as.id, as.level == -1 ? -1 : keypad.on ? 0 : as.level,
+                       true);
       }
     }
+    keypad.on = !keypad.on;
     break; }
 
   // Single/Multi-room scene
   case BUTTON_SINGLE_ACTION:
-    keypad.dimDirection = 0;
-    keypad.startOfDim = 0;
-    keypad.firstTap = 0;
-    keypad.lastButton = button.id;
-    if (isReleased) {
-      return;
-    }
     // Aliased outputs that refer to DMX fixtures have to be set by us, each
     // time a button is pressed.
     for (const auto& as : button.assignments) {
@@ -1055,7 +1122,6 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
       return;
     }
 
-    auto now = Util::millis();
     if (isReleased) {
       // If using dummy output devicess, both Lutron and us will try to adjust
       // the dimmer. Avoid flashing, by forcing the final value to the one that
@@ -1095,7 +1161,7 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
           if (keypad.dimDirection < 0) {
             level = std::min(level,
                  (int)(((DIMLEVELS*it->second+5000)/10000-1)*10000/DIMLEVELS));
-          } else {
+          } else if (keypad.dimDirection > 0) {
             level = std::max(level,
                  (int)(((DIMLEVELS*it->second+5000)/10000+1)*10000/DIMLEVELS));
           }
@@ -1110,7 +1176,8 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
       // multiple discrete intervals because they don't like smooth adjustments.
       // In those situations we don't want to confuse them by jumping all the
       // way.
-      if (keypad.numTaps == 2 && now - keypad.firstTap < DOUBLETAP) {
+      if (keypad.dimDirection != 0 && keypad.numTaps == 2 &&
+          now - keypad.firstTap < DOUBLETAP) {
         const int jumpedLevel = keypad.dimDirection > 0 ? 10000 : 0;
         // Base the estimated time between taps on the previously seen taps.
         // That makes sure we react to double clicks as soon as possible, but
@@ -1165,6 +1232,7 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
         keypad.dimDirection = newDirection;
         keypad.startOfDim = 0;
         keypad.firstTap = 0;
+        keypad.numTaps = 0;
       }
       keypad.startingLevels.clear();
 

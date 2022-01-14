@@ -101,7 +101,8 @@
             // "Backyard: 3"
             // "Away: 1, 1"
             // "All Off: 1, 6"
-            { "TOGGLE": [ 3 ] },     // Use Lutron integration id of RRD switch.
+            { "SCRIPT":"./script.sh",// Run a helper script for extra features.
+              "TOGGLE": [ 3 ] },     // Use Lutron integration id of RRD switch.
        "3": { "DEVICE": [ 1, 1 ] },  // Use Lutron integration id of keypad.
        "4": { "DEVICE": [ 1, 6 ] } } // The second value is the button number.
   },
