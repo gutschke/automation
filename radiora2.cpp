@@ -1036,7 +1036,6 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
       keypad.numTaps = 1;
       keypad.on = false;
     } else {
-      DBGc(5, "DELAY IS " << now - keypad.startOfDim << "MS");
       if (!isReleased) {
         keypad.numTaps++;
       }
@@ -1052,11 +1051,12 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
       // If this event included a release event, we can make a more reasonable
       // guess for how long to wait.
       isReleased
-        ? std::max(300u, std::min(DOUBLETAP/2,
-                                  (now - keypad.startOfDim)*3/2))
+        ? std::max(300u, std::min(
+          keypad.type == DEV_PICO_KEYPAD ? DOUBLETAP : LONGDOUBLETAP,
+          (now - keypad.startOfDim)*3/2))
         : keypad.type == DEV_PICO_KEYPAD
-        ? DOUBLETAP/2
-        : DOUBLETAP*3/4,
+        ? DOUBLETAP
+        : LONGDOUBLETAP,
       [this, firstTap = keypad.firstTap, startOfDim = keypad.startOfDim,
        numTaps = keypad.numTaps, rel = keypad.released, &keypad, &button]() {
         if (firstTap != keypad.firstTap || numTaps != keypad.numTaps ||
