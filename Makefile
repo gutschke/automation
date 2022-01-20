@@ -1,12 +1,15 @@
 # CXX    := clang++-6.0
 CXX      := g++
 CFLAGS   := --std=gnu++2a -g -Wall -D_DEFAULT_SOURCE -fno-rtti -fno-exceptions \
-            -Wno-psabi -I libwebsockets/include
+            -fno-strict-aliasing -Wno-psabi -I libwebsockets/include
 LFLAGS   := -Wall
-LIBS     := -lfmt -lpugixml libwebsockets/lib/libwebsockets.a -lcap
+LIBS     := -lpugixml
+ALIBS    := -lfmt libwebsockets/lib/libwebsockets.a -lcap
 
-all: automation
+all: automation lutron
 SRCS     := $(shell echo *.cpp)
+AUTOMAT  := $(shell echo *.cpp | xargs -n1 | fgrep -v cmd)
+LUTRON   := $(shell echo *.cpp | xargs -n1 | fgrep -v main)
 
 ifneq (clean, $(filter clean, $(MAKECMDGOALS)))
   -include .build/debug
@@ -21,17 +24,20 @@ ifeq (1,$(DEBUG))
   LFLAGS += -static-libasan
 else
   DFLAGS := -O3
-  CFLAGS += -DNDEBUG
-  LFLAGS += -s
+  CFLAGS += -DNDEBUG -ffunction-sections -fdata-sections -flto
+  LFLAGS += -s -Xlinker --gc-sections
 endif
 
 .PHONY: clean
 clean:
-	rm -rf automation .build
+	rm -rf automation lutron .build
 	@[ "$(DEBUG)" = 1 ] && { mkdir -p .build; { echo 'DEBUG ?= 1'; echo 'override OLDDEBUG := 1'; } >.build/debug; } || :
 
-automation: $(patsubst %.cpp,.build/%.o,$(SRCS)) .build/debug
-	$(CXX) $(DFLAGS) $(LFLAGS) -o $@ $(patsubst %.cpp,.build/%.o,$(SRCS)) $(LIBS)
+automation: $(patsubst %.cpp,.build/%.o,$(AUTOMAT)) .build/debug
+	$(CXX) $(DFLAGS) $(LFLAGS) -o $@ $(patsubst %.cpp,.build/%.o,$(AUTOMAT)) $(LIBS) $(ALIBS)
+
+lutron: $(patsubst %.cpp,.build/%.o,$(LUTRON)) .build/debug
+	$(CXX) $(DFLAGS) $(LFLAGS) -o $@ $(patsubst %.cpp,.build/%.o,$(LUTRON)) $(LIBS)
 
 .build/%.o: %.cpp | .build/debug
 	@mkdir -p .build

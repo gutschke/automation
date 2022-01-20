@@ -72,7 +72,9 @@ json.hpp
 # Binary files and local files
 .build
 automation
+lutron
 site.json
 script.sh
 libwebsockets
 *.ra2
+*.pdf

@@ -12,7 +12,7 @@
 // number of glibc symbols that we need without actually using system headers.
 extern "C" {
   int open(const char *, int, ...);
-  int ioctl(int, int, void *);
+  int ioctl(int, unsigned long, ...);
   void usleep(unsigned);
 }
 
