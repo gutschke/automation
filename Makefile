@@ -22,6 +22,8 @@ ifeq (1,$(DEBUG))
   DFLAGS := -fsanitize=address -fno-omit-frame-pointer -O0
 # DFLAGS := -fno-omit-frame-pointer -O0
   LFLAGS += -static-libasan
+  LIBS   += $(ALIBS)
+  ALIBS  :=
 else
   DFLAGS := -O3
   CFLAGS += -DNDEBUG -ffunction-sections -fdata-sections -flto
