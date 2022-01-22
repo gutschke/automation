@@ -68,6 +68,7 @@ class RadioRA2 {
   const unsigned int LONG_REOPEN_TMO  = 60000;
   const unsigned int ALIVE_INTERVAL   = 60000;
   const unsigned int ALIVE_CMD_TMO    =  5000;
+  const unsigned int LONGPICO         =   500;
   const unsigned int DOUBLETAP        =   900;
   const unsigned int LONGDOUBLETAP    =  2500;
   const unsigned int DIMLEVELS        =    15;

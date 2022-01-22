@@ -1055,7 +1055,7 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
           keypad.type == DEV_PICO_KEYPAD ? DOUBLETAP : LONGDOUBLETAP,
           (now - keypad.startOfDim)*3/2))
         : keypad.type == DEV_PICO_KEYPAD
-        ? DOUBLETAP
+        ? LONGPICO
         : LONGDOUBLETAP,
       [this, firstTap = keypad.firstTap, startOfDim = keypad.startOfDim,
        numTaps = keypad.numTaps, rel = keypad.released, &keypad, &button]() {
