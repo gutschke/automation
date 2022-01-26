@@ -48,6 +48,10 @@
     // "Bed Room: [3], [ 1.1 ], 1"
     // "Den: [4]"
   },
+  "WATCH" : {
+    // We can trigger a script to execute, whenever an output changes its level.
+    "3": "outputchanged.sh"
+  },
   "KEYPAD ORDER" : [ 2, "Other Lights", 1 ],
   "KEYPAD": {
     "1": { // Hallway Keypad (use the Lutron integration id)

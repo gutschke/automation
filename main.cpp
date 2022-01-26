@@ -171,6 +171,18 @@ static void readLine(RadioRA2& ra2, DMX& dmx, Relay& relay,
   }
 }
 
+static void runScript(RadioRA2& ra2, const std::string& script) {
+  FILE *fd = popen(script.c_str(), "r");
+  char *line = nullptr;
+  size_t len;
+  while (fd >= 0 && (len = 0, getline(&line, &len, fd)) >= 0) {
+    ra2.command(Util::trim(line));
+    free(line);
+    line = nullptr;
+  }
+  free(line);
+}
+
 static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
                           Relay& relay) {
   // Out of the box, our code does not implement any policy and won't really
@@ -191,6 +203,20 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
         fmt::format("{}{}", RadioRA2::DMXALIAS, params[0].get<int>()),
         [&dmx, params](int level, bool fade) {
           setDMX(dmx, params, level, fade);
+        });
+    }
+  }
+  // Iterate over all "WATCH" objects and attach actions that should
+  // trigger when an output changes.
+  if (site.contains("WATCH")) {
+    const auto& watch = site["WATCH"];
+    for (const auto& [id_, script] : watch.items()) {
+      const auto id = atoi(id_.c_str());
+      ra2.monitorOutput(id, [id, &ra2, &script](int level) {
+          setenv("OUTPUT",  fmt::format("{}", id).c_str(), 1);
+          setenv("LEVEL",
+                 fmt::format("{}.{:02}", level/100, level%100).c_str(), 1);
+          runScript(ra2, script);
         });
     }
   }
@@ -267,15 +293,7 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
                   else      unsetenv("LONG");
                   if (num) setenv("NUMTAPS", fmt::format("{}", num).c_str(), 1);
                   else   unsetenv("NUMTAPS");
-                  FILE *fd = popen(script.c_str(), "r");
-                  char *line = nullptr;
-                  size_t len;
-                  while (fd >= 0 && (len = 0, getline(&line, &len, fd)) >= 0) {
-                    ra2.command(Util::trim(line));
-                    free(line);
-                    line = nullptr;
-                  }
-                  free(line);
+                  runScript(ra2, script);
                 });
             }
           } else if (at == "RELAY" && site.contains("GPIO")) {

@@ -187,6 +187,12 @@ void RadioRA2::readLine(const std::string& line) {
           out->second.level = newLevel;
           context = out->second.name;
 
+          // Notify listeners, if any.
+          const auto it = outputMonitor_.find(id);
+          if (it != outputMonitor_.end()) {
+            it->second(newLevel);
+          }
+
           // Check if there is any aliased output. This allows us to take over
           // the implementation of an output that is *also* natively handled by
           // the Lutron controller.
@@ -751,6 +757,10 @@ void RadioRA2::addButtonListener(int kp, int bt,
       keypad->second.listeners.push_back(cb);
     }
   }
+}
+
+void RadioRA2::monitorOutput(int id, std::function<void (int level)> cb) {
+  outputMonitor_[id] = cb;
 }
 
 int RadioRA2::addOutput(const std::string name,
