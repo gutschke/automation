@@ -213,6 +213,11 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
     for (const auto& [id_, script] : watch.items()) {
       const auto id = atoi(id_.c_str());
       ra2.monitorOutput(id, [id, &ra2, &script](int level) {
+          unsetenv("KEYPAD");
+          unsetenv("BUTTON");
+          unsetenv("ON");
+          unsetenv("LONG");
+          unsetenv("NUMTAPS");
           setenv("OUTPUT",  fmt::format("{}", id).c_str(), 1);
           setenv("LEVEL",
                  fmt::format("{}.{:02}", level/100, level%100).c_str(), 1);
@@ -286,6 +291,8 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
               ra2.addButtonListener(
                 atoi(kp.c_str()), atoi(bt.c_str()),
                 [script, &ra2](int kp, int bt, bool on, bool isLong, int num) {
+                  unsetenv("OUTPUT");
+                  unsetenv("LEVEL");
                   setenv("KEYPAD",  fmt::format("{}", kp).c_str(), 1);
                   setenv("BUTTON",  fmt::format("{}", bt).c_str(), 1);
                   setenv("ON",      fmt::format("{}", on).c_str(), 1);
