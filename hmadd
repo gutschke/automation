@@ -1,0 +1,14 @@
+#!/bin/bash
+
+acc=0
+for i in "$@"; do
+  i=$((i/100*60+i%100))
+  acc=$((acc+i))
+done
+if [ $acc -lt 0 ]; then
+  acc=$((1440-(-acc%1440)))
+else
+  acc=$((acc%1440))
+fi
+printf '%02d%02d\n' $((acc/60)) $((acc%60))
+exit 0
