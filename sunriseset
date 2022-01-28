@@ -1,0 +1,6 @@
+#!/usr/bin/perl
+use DateTime;
+use DateTime::Event::Sunrise;my $s = DateTime::Event::Sunrise->new(longitude => $ARGV[0], latitude => $ARGV[1]); 
+my $d = DateTime->now(time_zone => "local"); 
+print $s->sunrise_datetime($d), "\n"; 
+print $s->sunset_datetime($d), "\n";
