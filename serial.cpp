@@ -13,7 +13,11 @@
 extern "C" {
   int open(const char *, int, ...);
   int ioctl(int, unsigned long, ...);
-  void usleep(unsigned);
+  #ifndef __useconds_t_defined
+  int usleep(unsigned);
+  #else
+  int usleep(__useconds_t);
+  #endif
 }
 
 int Serial::open(const char *s) {

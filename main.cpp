@@ -172,15 +172,16 @@ static void readLine(RadioRA2& ra2, DMX& dmx, Relay& relay,
 }
 
 static void runScript(RadioRA2& ra2, const std::string& script) {
-  FILE *fd = popen(script.c_str(), "r");
+  FILE *fp = popen(script.c_str(), "r");
   char *line = nullptr;
   size_t len;
-  while (fd >= 0 && (len = 0, getline(&line, &len, fd)) >= 0) {
+  while (fp && (len = 0, getline(&line, &len, fp)) >= 0) {
     ra2.command(Util::trim(line));
     free(line);
     line = nullptr;
   }
   free(line);
+  pclose(fp);
 }
 
 static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,

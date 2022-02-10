@@ -18,7 +18,7 @@ extern "C" {
     static const bool tty = isatty(2); \
     unsigned ts = Util::dt(); \
     std::cerr << fmt::format("{:3}.{:03}: ", ts/1000, ts%1000) \
-              << fmt::format((tty && c) ? "\x1B[{}m" : "", 30 + c) << x \
+              << ((tty && c) ? fmt::format("\x1B[{}m", 30 + c) : "") << x \
               << ((tty && c) ? "\x1B[m" : "") \
               << std::endl; \
   } while (0)
