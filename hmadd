@@ -1,9 +1,14 @@
 #!/bin/bash
 
-exec 2>/dev/null
+exec 3>&2 2>/dev/null
 long="$(</etc/default/longitude)"
 lat="$(</etc/default/latitude)"
-cache="/tmp/.sunriseset.${USER}"
+cache="/tmp/.sunriseset.${USER:-$(id -un)}"
+
+usage() {
+  echo "${0##*/} { --seconds | --minutes | --hm } HHMM | sunrise | sunset ..." >&3
+  exit 1
+}
 
 sunriseset() {
   /usr/bin/perl -e '
@@ -27,10 +32,16 @@ else
 fi
 
 acc=0
+seconds=
+minutes=
 for i in "$@"; do
   case "${i}" in
+    --seconds) seconds=t; continue;;
+    --minutes) minutes=t; continue;;
+    --hm)      seconds=; minutes=; continue;;
     sunrise) i="${sunrise}";;
     sunset)  i="${sunset}";;
+    *) [[ "${i}" =~ ^[0-9][0-9][0-9][0-9]$ ]] || usage;;
   esac
   i=$((i/100*60+i%100))
   acc=$((acc+i))
@@ -40,4 +51,10 @@ if [ $acc -lt 0 ]; then
 else
   acc=$((acc%1440))
 fi
-printf '%02d%02d\n' $((acc/60)) $((acc%60))
+if [ -n "${seconds}" ]; then
+  echo "$((60*${acc}))"
+elif [ -n "${minutes}" ]; then
+  echo "${acc}"
+else
+  printf '%02d%02d\n' $((acc/60)) $((acc%60))
+fi
