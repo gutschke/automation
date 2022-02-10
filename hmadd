@@ -1,7 +1,37 @@
 #!/bin/bash
 
+exec 2>/dev/null
+long="$(</etc/default/longitude)"
+lat="$(</etc/default/latitude)"
+cache="/tmp/.sunriseset.${USER}"
+
+sunriseset() {
+  /usr/bin/perl -e '
+    use DateTime;
+    use DateTime::Event::Sunrise;
+    my $s = DateTime::Event::Sunrise->new(longitude => $ARGV[0],
+                                          latitude => $ARGV[1]);
+    my $d = DateTime->now(time_zone => "local");
+    print $s->sunrise_datetime($d), "\n";
+    print $s->sunset_datetime($d), "\n";
+  ' -- "$@"
+}
+if grep "$(date +%Y-%m-%dT)" "${cache}" >&/dev/null; then
+  sunrise="$(sed -n 's/.*T0*\([^:]*\):\([^:]*\).*/\1\2/;1p' "${cache}")"
+   sunset="$(sed -n 's/.*T0*\([^:]*\):\([^:]*\).*/\1\2/;2p' "${cache}")"
+else
+  >"${cache}"
+  data="$(sunriseset "${long:-0}" "${lat:-0}" | tee -a "${cache}")"
+  sunrise="$(sed -n 's/.*T0*\([^:]*\):\([^:]*\).*/\1\2/;1p' <<<"${data}")"
+   sunset="$(sed -n 's/.*T0*\([^:]*\):\([^:]*\).*/\1\2/;2p' <<<"${data}")"
+fi
+
 acc=0
 for i in "$@"; do
+  case "${i}" in
+    sunrise) i="${sunrise}";;
+    sunset)  i="${sunset}";;
+  esac
   i=$((i/100*60+i%100))
   acc=$((acc+i))
 done
@@ -11,4 +41,3 @@ else
   acc=$((acc%1440))
 fi
 printf '%02d%02d\n' $((acc/60)) $((acc%60))
-exit 0
