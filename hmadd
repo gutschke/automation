@@ -41,7 +41,7 @@ for i in "$@"; do
     --hm)      seconds=; minutes=; continue;;
     sunrise) i="${sunrise}";;
     sunset)  i="${sunset}";;
-    *) [[ "${i}" =~ ^[0-9][0-9][0-9][0-9]$ ]] || usage;;
+    *) [[ "${i}" =~ ^[0-9]?[0-9]?[0-9]?[0-9]$ ]] || usage;;
   esac
   i=$((i/100*60+i%100))
   acc=$((acc+i))
