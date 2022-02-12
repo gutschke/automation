@@ -826,6 +826,33 @@ void RadioRA2::toggleOutput(int out) {
   }
 }
 
+void RadioRA2::command(const std::string& cmd,
+                       std::function<void (const std::string& res)> cb,
+                       std::function<void (void)> err) {
+  if (Util::starts_with(cmd, "#DEVICE,")) {
+    char *endPtr;
+    const auto& dev = devices_.find((int)strtol(cmd.c_str() + 8, &endPtr, 10));
+    if (dev != devices_.end() && *endPtr++ == ',') {
+      int l = (int)strtol(endPtr, &endPtr, 10);
+      auto& keypad = dev->second;
+      if (keypad.components.find(l) != keypad.components.end() &&
+          !strcmp(endPtr, ",4") && !keypad.supportsReleaseEvent) {
+        // There are a couple of situations where we generate synthetic
+        // button events that will then be sent to the Lutron main repeater.
+        // These are events of the form "#DEVICE,<keypad>,<button>,{3,4}".
+        // This can be confusing, if the actual device isn't capable of
+        // producing ACTION_RELEASE events, as some keypads are wont to do.
+        // When dealing with that type of device, we suppress the button up
+        // event altogether, so that our code experiences the same type of
+        // events no matter whether they come from the physical device or
+        // were produced on the fly.
+        return;
+      }
+    }
+  }
+  lutron_.command(cmd, cb, err);
+}
+
 std::string RadioRA2::getKeypads(const std::vector<int>& order) {
   // Returns a simplified snapshot of our internal state in JSON format.
   // All strings need to be escaped first. We also remove inlined configuration
@@ -1023,6 +1050,14 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
     for (const auto& listener : button.listeners) {
       listener(keypad.id, button.id, false, false, 0);
     }
+  } else {
+    if (button.type == BUTTON_TOGGLE ||
+        button.type == BUTTON_ADVANCED_TOGGLE ||
+        button.type == BUTTON_SINGLE_ACTION) {
+      // Some keypads report ACTION_PRESS/ACTION_RELEASE, whereas others
+      // only report ACTION_PRESS
+      keypad.supportsReleaseEvent = true;
+    }
   }
 
   // Detect double and long presses, where possible, and provide this
@@ -1033,8 +1068,9 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
   if (button.type == BUTTON_TOGGLE ||
       button.type == BUTTON_ADVANCED_TOGGLE ||
       button.type == BUTTON_SINGLE_ACTION) {
-    // RadioRA2 doesn't send "release" events for regular keypad buttons.
-    // It only does so for the dimmer buttons on the keypad.
+    // Depending on the model of the SeeTouch keypad, there might or might
+    // not be "release" events for regular keypad buttons. There should always
+    // be "release" event for the dimmer buttons on the keypad.
     // On the other hand, for Pico remotes, it is possible to track long
     // button presses.
     if (keypad.dimDirection || keypad.lastButton != button.id ||
@@ -1063,7 +1099,8 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
       isReleased
         ? std::max(300u, std::min(
           keypad.type == DEV_PICO_KEYPAD ? DOUBLETAP : LONGDOUBLETAP,
-          (now - keypad.startOfDim)*3/2))
+          (now - (keypad.startOfDim == now
+                  ? keypad.firstTap : keypad.startOfDim))*3/2))
         : keypad.type == DEV_PICO_KEYPAD
         ? LONGPICO
         : LONGDOUBLETAP,
@@ -1076,7 +1113,7 @@ void RadioRA2::buttonPressed(Device& keypad, Component& button,
         }
         // Sufficient time has past since the last button event. We
         // are certain we now have this type of button press identified.
-        bool isLong = keypad.type == DEV_PICO_KEYPAD && !rel;
+        bool isLong = keypad.supportsReleaseEvent && !rel;
         keypad.numTaps = 0;
         keypad.firstTap = 0;
         for (const auto& listener : button.listeners) {

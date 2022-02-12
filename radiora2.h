@@ -12,6 +12,7 @@
 #include "event.h"
 #include "lutron.h"
 
+
 class RadioRA2 {
  public:
   enum DeviceType {
@@ -54,9 +55,7 @@ class RadioRA2 {
   }
   void command(const std::string& cmd,
                std::function<void (const std::string& res)> cb = nullptr,
-               std::function<void (void)> err = nullptr) {
-    lutron_.command(cmd, cb, err);
-  }
+               std::function<void (void)> err = nullptr);
   int getKeypad(const std::string& label) const {
     auto it = std::find_if(devices_.begin(), devices_.end(),
                     [&label](const auto& d) { return label == d.second.name; });
@@ -213,8 +212,10 @@ class RadioRA2 {
   struct Device {
     Device() { }
     Device(int id, const std::string& name, DeviceType type)
-      : id(id), name(name), type(type), lastButton(-1), dimDirection(0),
-        startOfDim(0), firstTap(0), numTaps(0) { }
+      : id(id), name(name), type(type),
+        supportsReleaseEvent(type == DEV_PICO_KEYPAD),
+        lastButton(-1), dimDirection(0), startOfDim(0), firstTap(0),
+        numTaps(0) { }
     bool operator==(const Device& o) const {
       return id == o.id && type == o.type && name == o.name &&
              components == o.components;
@@ -223,6 +224,7 @@ class RadioRA2 {
     std::string              name;
     DeviceType               type;
     std::map<int, Component> components;
+    bool                     supportsReleaseEvent;
 
     // Lutron does a great job with the dimmer buttons. It jumps brightness
     // levels if the button is just tapped, and it smoothly fades the dimmers
@@ -237,10 +239,10 @@ class RadioRA2 {
     // external scripts, which can change behavior based on double-taps.
     int                      lastButton;
     int                      dimDirection;
-    int                      startOfDim;
-    int                      firstTap;
+    unsigned                 startOfDim;
+    unsigned                 firstTap;
     int                      numTaps;
-    int                      released;
+    unsigned                 released;
     std::map<int, int>       startingLevels;
     bool                     on;
   };
