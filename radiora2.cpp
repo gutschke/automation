@@ -260,7 +260,8 @@ void RadioRA2::init(std::function<void (void)> cb) {
   // Initialize the connection. Most notably, that means turning on all
   // the notifications that we are interested in.
   static const MonitorType events[] = {
-    MONITOR_BUTTON, MONITOR_LED, MONITOR_OCCUPANCY, MONITOR_PHOTOSENSOR };
+    MONITOR_BUTTON, MONITOR_LED, MONITOR_OCCUPANCY, MONITOR_PHOTOSENSOR,
+    MONITOR_OCCUPANCYGRP };
   for (const auto& ev : events) {
     command(fmt::format("#MONITORING,{},1", ev));
   }
@@ -580,9 +581,7 @@ bool RadioRA2::extractSchemaInfo(pugi::xml_document& xml) {
   const auto& outs = xml.select_nodes("//Output");
   for (const auto& output : outs) {
     Output out(output.node().attribute("IntegrationID").as_int(-1),
-               output.node().attribute("Name").value(),
-               output.node().attribute("OutputType").value() !=
-               std::string("NON_DIM"));
+               output.node().attribute("Name").value());
     outputs[out.id] = out;
   }
 
@@ -959,6 +958,24 @@ std::string RadioRA2::getKeypads(const std::vector<int>& order) {
   }
   str << "]";
   return str.str();
+}
+
+void RadioRA2::updateEnvironment() {
+  std::ostringstream o;
+  int i = 0;
+  for (auto iter = outputs_.begin(); iter != outputs_.end(); i++) {
+    while (i < iter->first) {
+      o << "'' ";
+      i++;
+    }
+    o << iter->second.level;
+    if (iter++ == outputs_.end()) {
+      break;
+    } else {
+      o << " ";
+    }
+  }
+  setenv("OUTPUTS", o.str().c_str(), 1);
 }
 
 void RadioRA2::suppressLutronDimmer(int id, bool mode) {

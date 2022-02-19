@@ -62,6 +62,7 @@ class RadioRA2 {
     return it == devices_.end() ? -1 : it->second.id;
   }
   std::string getKeypads(const std::vector<int>& order);
+  void updateEnvironment();
 
  private:
   const unsigned int SHORT_REOPEN_TMO =  5000;
@@ -249,14 +250,13 @@ class RadioRA2 {
 
   struct Output {
     Output() { }
-    Output(int id, const std::string& name, bool dim)
-      : id(id), name(name), dim(dim), level(0) { }
+    Output(int id, const std::string& name)
+      : id(id), name(name), level(0) { }
     bool operator==(const Output& o) const {
-      return id == o.id && dim == o.dim && name == o.name;
+      return id == o.id && name == o.name;
     }
     int         id;
     std::string name;
-    bool        dim;
     int         level;
   };
 

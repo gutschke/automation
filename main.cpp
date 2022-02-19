@@ -172,6 +172,7 @@ static void readLine(RadioRA2& ra2, DMX& dmx, Relay& relay,
 }
 
 static void runScript(RadioRA2& ra2, const std::string& script) {
+  ra2.updateEnvironment();
   FILE *fp = popen(script.c_str(), "r");
   char *line = nullptr;
   size_t len;
@@ -222,6 +223,7 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
           setenv("OUTPUT",  fmt::format("{}", id).c_str(), 1);
           setenv("LEVEL",
                  fmt::format("{}.{:02}", level/100, level%100).c_str(), 1);
+          setenv("level", fmt::format("{}", level).c_str(), 1);
           runScript(ra2, script);
         });
     }
