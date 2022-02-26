@@ -834,8 +834,11 @@ void RadioRA2::command(const std::string& cmd,
     if (dev != devices_.end() && *endPtr++ == ',') {
       int l = (int)strtol(endPtr, &endPtr, 10);
       auto& keypad = dev->second;
-      if (keypad.components.find(l) != keypad.components.end() &&
-          !strcmp(endPtr, ",4") && !keypad.supportsReleaseEvent) {
+      const auto comp = keypad.components.find(l);
+      if (comp != keypad.components.end() && !keypad.supportsReleaseEvent &&
+          comp->second.type != BUTTON_LOWER &&
+          comp->second.type != BUTTON_RAISE &&
+          !strcmp(endPtr, ",4")) {
         // There are a couple of situations where we generate synthetic
         // button events that will then be sent to the Lutron main repeater.
         // These are events of the form "#DEVICE,<keypad>,<button>,{3,4}".
