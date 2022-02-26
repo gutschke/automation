@@ -885,6 +885,7 @@ std::string RadioRA2::getKeypads(const std::vector<int>& order) {
   // Lutron controller itself.
   // If the caller requested a particular order of keypads, enforce that now.
   // Add any missing keypads that weren't listed already.
+  // Omit any devices that have a negative id in the "order" vector.
   std::vector<int> ids;
   std::copy_if(order.begin(), order.end(), back_inserter(ids),
     [this](const int i) { return devices_.find(i) != devices_.end(); });
@@ -894,7 +895,8 @@ std::string RadioRA2::getKeypads(const std::vector<int>& order) {
         dev.type != DEV_HYBRID_SEETOUCH_KEYPAD) {
       continue;
     }
-    if (std::find(ids.begin(), ids.end(), id) == ids.end()) {
+    if (std::find(ids.begin(), ids.end(), id) == ids.end() &&
+        std::find(order.begin(), order.end(), -id) == order.end()) {
       ids.push_back(id);
     }
   }
