@@ -10,55 +10,88 @@
 #include "util.h"
 
 
-Relay::Relay(Event& event, const std::string& deviceName,
-             const std::string& helper)
+Relay::Relay(Event& event, const std::string& deviceName)
   : event_(event),
-    fd_(open(deviceName.c_str(), O_RDONLY)),
-    helper_(helper) {
+    fd_(open(deviceName.c_str(), O_RDONLY)) {
 }
 
 Relay::~Relay() {
+  for (const auto [ _, fd ] : handles_) {
+    close(fd[1]);
+  }
   if (fd_ >= 0) {
     close(fd_);
   }
 }
 
-void Relay::set(int pin, bool state) {
+int Relay::getHandle(int pin, int mode) {
+  // If we can't access GPIO, then there is nothing to do here.
+  if (fd_ < 0) {
+    return -1;
+  }
+  // If the input or output mode has changed, we have to close the file
+  // handle and get a new one.
+  auto it = handles_.find(pin);
+  if (it != handles_.end() &&
+      (it->second[0] & (int)
+       (GPIOHANDLE_REQUEST_INPUT | GPIOHANDLE_REQUEST_OUTPUT)) != mode) {
+    close(it->second[1]);
+    handles_.erase(it);
+    it = handles_.end();
+  }
+  // If we don't yet have a handle, request one now.
+  if (it == handles_.end()) {
+    struct gpiohandle_request req = { };
+    req.lineoffsets[0] = pin;
+    req.lines = 1;
+    req.flags = mode;
+    if (!ioctl(fd_, GPIO_GET_LINEHANDLE_IOCTL, &req) && req.fd >= 0) {
+      handles_.insert(std::make_pair(pin, std::array<int, 2>{mode, req.fd}));
+      return req.fd;
+    } else {
+      return -1;
+    }
+  }
+  return it->second[1];
+}
+
+void Relay::set(int pin, bool state, int bias) {
   DBG("Relay::set(" << pin << ", " << (state ? "true" : "false") << ")");
-  struct gpiohandle_request req = { };
-  req.lineoffsets[0] = pin;
-  req.lines = 1;
-  req.flags = GPIOHANDLE_REQUEST_OUTPUT;
-  if (fd_ >= 0 && !ioctl(fd_, GPIO_GET_LINEHANDLE_IOCTL, &req) &&
-      req.fd >= 0) {
+  const int handle = getHandle(pin, GPIOHANDLE_REQUEST_OUTPUT);
+  if (handle >= 0) {
+    struct gpiohandle_config conf = { };
+    conf.flags = GPIOHANDLE_REQUEST_OUTPUT |
+                 (bias == -1 ? GPIOHANDLE_REQUEST_BIAS_DISABLE : bias);
+    // If the configuration flags (e.g. for pull up/down bias) have changed,
+    // update the settings now.
+    if (handles_[pin][0] != (int)conf.flags) {
+      handles_[pin][0] = conf.flags;
+      ioctl(handle, GPIOHANDLE_SET_CONFIG_IOCTL, &conf);
+    }
+
+    // Set the desired output state of the pin.
     struct gpiohandle_data data = { };
-    data.values[0] = state;
-    ioctl(req.fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data);
-    close(req.fd);
+    data.values[0] = state ? 1 : 0;
+    ioctl(handle, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &data);
   }
 }
 
-bool Relay::get(int pin) {
-  if (configured_.find(pin) == configured_.end()) {
-    // The GPIO driver in the Linux kernel knows nothing about advanced GPIO
-    // features such as pull-up/down resistors. Traditionally, this requires
-    // directly programming the chipset registers. But instead, we rely on
-    // an external helper program.
-    configured_.insert(pin);
-    if (system(fmt::format("{} mode {} input >/dev/null 2>&1",
-                           helper_, pin).c_str()));
-    if (system(fmt::format("{} mode {} up >/dev/null 2>&1",
-                           helper_, pin).c_str()));
-  }
-  struct gpiohandle_request req = { };
-  req.lineoffsets[0] = pin;
-  req.lines = 1;
-  req.flags = GPIOHANDLE_REQUEST_INPUT;
-  if (fd_ >= 0 && !ioctl(fd_, GPIO_GET_LINEHANDLE_IOCTL, &req) &&
-      req.fd >= 0) {
+bool Relay::get(int pin, int bias) {
+  const int handle = getHandle(pin, GPIOHANDLE_REQUEST_INPUT);
+  if (handle >= 0) {
+    struct gpiohandle_config conf = { };
+    conf.flags = GPIOHANDLE_REQUEST_INPUT |
+                 (bias == -1 ? GPIOHANDLE_REQUEST_BIAS_PULL_UP : bias);
+    // If the configuration flags (e.g. for pull up/down bias) have changed,
+    // update the settings now.
+    if (handles_[pin][0] != (int)conf.flags) {
+      handles_[pin][0] = conf.flags;
+      ioctl(handle, GPIOHANDLE_SET_CONFIG_IOCTL, &conf);
+    }
+
+    // Read the input pin.
     struct gpiohandle_data data = { };
-    ioctl(req.fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &data);
-    close(req.fd);
+    ioctl(handle, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &data);
     DBG("Relay::get(" << pin << ") -> " << (data.values[0] ? "true" : "false"));
     return data.values[0];
   }
@@ -82,15 +115,17 @@ void Relay::toggle(int pin) {
   // input and activate the pull-down resistor. For "on", we have to try
   // both outputting 3.3V and 0V, though. We only need to hold the value
   // for a short amount of time, when simulating button presses, though.
-  set(pin, false);
+  set(pin, true, GPIOHANDLE_REQUEST_BIAS_DISABLE);
+
   // The relay board now reads an "on" condition, but the keyfob is still "off"
   event_.addTimeout(300, [this, pin]() {
     // Next, we also signal an "on" condition to the keyfob remote. The relay
     // board will treat this as "off".
-    set(pin, true);
+    set(pin, false, GPIOHANDLE_REQUEST_BIAS_DISABLE);
+
     event_.addTimeout(300, [this, pin]() {
       // Return pin to the "off" condition, by relying on the pull-down resistor
       // to do the right thing for both types of devices.
-      get(pin);
-  }); });
+      get(pin, GPIOHANDLE_REQUEST_BIAS_PULL_DOWN);
+      }); });
 }
