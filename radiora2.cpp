@@ -564,7 +564,7 @@ bool RadioRA2::extractSchemaInfo(pugi::xml_document& xml) {
       // Iterate over all actions that have been assigned to the buttons.
       // Generally, these are just light levels for different outputs.
       const auto& assignments =
-        component.node().select_nodes(".//PresetAssignment");
+        component.node().select_nodes(".//PresetAssignment[@AssignmentType=\"2\"]");
       for (const auto& assign : assignments) {
         // Convert dimmer level to our internal representation.
         Assignment as{atoi(assign.node().child_value("IntegrationID")),
