@@ -516,6 +516,10 @@ bool RadioRA2::extractSchemaInfo(pugi::xml_document& xml) {
       { BUTTON_TOGGLE, "Toggle" },
       { BUTTON_ADVANCED_TOGGLE, "AdvancedToggle" },
       { BUTTON_SINGLE_ACTION, "SingleAction" },
+      // We treat the raise/lower buttons on the Pico as if they were
+      // regular scene buttons. This might need revisiting.
+      { BUTTON_SINGLE_ACTION, "SingleSceneRaiseLower" },
+      { BUTTON_SINGLE_ACTION, "SingleSceneRaiseLower" },
       { BUTTON_LOWER, "MasterRaiseLower" } };
     for (const auto& t : table) {
       if (type == t.s) return t.t;
