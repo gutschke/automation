@@ -234,8 +234,8 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
     const auto& i2c = site["I2C"];
     for (const auto& [id_, def] : i2c.items()) {
       const auto id = atoi(id_.c_str());
-      relay.i2c(id, i2c["BUS"].get<int>(), i2c["DEV"].get<int>(),
-                i2c["ADDR"].get<int>(),i2c["BIT"].get<int>());
+      relay.i2c(id, def["BUS"].get<int>(), def["DEV"].get<int>(),
+                def["ADDR"].get<int>(), def["BIT"].get<int>());
     }
   }
   // Iterate over all "KEYPAD" object definitions and add new assignments
