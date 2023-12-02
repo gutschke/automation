@@ -21,8 +21,8 @@ Lutron::Lutron(Event& event,
     init_([](auto cb) { cb(); }), closed_(nullptr),
     gateway_(gateway), username_(username.empty() ? "lutron" : username),
     passwd_(passwd.empty() ? "integration" : passwd),
-    sock_(-1), dontfinalize_(false), isConnected_(false), inCommand_(false),
-    inCallback_(false), atPrompt_(false), keepAlive_(0) {
+    sock_(-1), msock_(-1), dontfinalize_(false), isConnected_(false),
+    inCommand_(false), inCallback_(false), atPrompt_(false), keepAlive_(0) {
   DBG("Lutron(\"" << gateway << "\", \"" << username <<"\", \""<<passwd<<"\")");
 }
 
@@ -159,6 +159,11 @@ void Lutron::closeSock() {
     event_.removePollFd(sock_);
     close(sock_);
     sock_ = -1;
+  }
+  if (msock_ >= 0) {
+    event_.removePollFd(msock_);
+    close(msock_);
+    msock_ = -1;
   }
   addrLen_ = 0;
   // If there is a periodic timeout scheduled with the event loop, remove it
@@ -517,25 +522,30 @@ void Lutron::login(std::function<void (void)> cb,
     // If the user didn't configure a particular IP address for the main
     // repeater, search for it by sending a request to the multicast address
     // 224.0.37.42:2647
-    int msock;
+    if (msock_ >= 0) {
+      // If we already have an open multicast socket, close it now. It might
+      // still hang around briefly after a timeout has expired.
+      event_.removePollFd(msock_);
+      close(msock_);
+    }
     const auto mcast=(const sockaddr_in){AF_INET,htons(2647),htonl(0xE000252A)};
     const auto membr=(const ip_mreq){htonl(0xE000252A)};
     const char req[] = "<LUTRON=1>";
-    if ((msock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) >= 0 &&
-        !setsockopt(msock, SOL_SOCKET, SO_REUSEADDR,
+    if ((msock_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) >= 0 &&
+        !setsockopt(msock_, SOL_SOCKET, SO_REUSEADDR,
                     (const int[]){1}, sizeof(int)) &&
-        !bind(msock, (const sockaddr *)&mcast, sizeof(mcast)) &&
-        !setsockopt(msock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &membr,
+        !bind(msock_, (const sockaddr *)&mcast, sizeof(mcast)) &&
+        !setsockopt(msock_, IPPROTO_IP, IP_ADD_MEMBERSHIP, &membr,
                     sizeof(membr)) &&
-        sendto(msock, req, sizeof(req)-1, 0, (const sockaddr *)&mcast,
+        sendto(msock_, req, sizeof(req)-1, 0, (const sockaddr *)&mcast,
                sizeof(mcast)) == sizeof(req)-1) {
       // We need to parse the reponse from the main repeater (or any other
       // device that is using this multicast address and sent us a reply). The
       // response looks similar'ish to XML, but isn't well-formed. So, we can't
       // use a proper XML parser and have to use an ad hoc parser instead.
-      event_.addPollFd(msock, POLLIN, [=, this](auto) {
+      event_.addPollFd(msock_, POLLIN, [=, this](auto) {
         char buf[1500] = { '>' };
-        const auto rc = read(msock, buf + 1, sizeof(buf) - 2);
+        const auto rc = read(msock_, buf + 1, sizeof(buf) - 2);
         if (rc > 0) {
           const std::string resp(buf);
           bool type = false, prod = false;
@@ -620,6 +630,8 @@ void Lutron::login(std::function<void (void)> cb,
             // This is a little silly. We keep converting back and forth
             // between "struct in_addr" and "std::string". But by doing so,
             // can make sure the string is well-formed.
+            close(msock_);
+            msock_ = -1;
             this->g_ = std::string(inet_ntoa(addr));
             DBG("Found gateway at " << this->g_);
             lookupAddress(this->g_);
@@ -630,8 +642,9 @@ void Lutron::login(std::function<void (void)> cb,
       });
     } else {
       DBG("Failed to find Lutron main repeater using multicast discovery");
-      if (msock >= 0) {
-        close(msock);
+      if (msock_ >= 0) {
+        close(msock_);
+        msock_ = -1;
       }
     }
   } else if (gateway_ != "find-radiora2") {

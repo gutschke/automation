@@ -89,7 +89,7 @@ class Lutron {
   std::function<void (std::function<void ()> cb)> init_;
   std::function<void (void)> closed_;
   std::string gateway_, g_, username_, passwd_;
-  int sock_;
+  int sock_, msock_;
   bool dontfinalize_;
   bool isConnected_;
   bool inCommand_;
