@@ -228,6 +228,16 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
         });
     }
   }
+  // The I2C object allows us to define virtual GPIO pins that need to be
+  // addressed through an I2C bus instead.
+  if (site.contains("I2C")) {
+    const auto& i2c = site["I2C"];
+    for (const auto& [id_, def] : i2c.items()) {
+      const auto id = atoi(id_.c_str());
+      relay.i2c(id, i2c["BUS"].get<int>(), i2c["DEV"].get<int>(),
+                i2c["ADDR"].get<int>(),i2c["BIT"].get<int>());
+    }
+  }
   // Iterate over all "KEYPAD" object definitions and add new assignments
   // to the various keypad buttons.
   if (site.contains("KEYPAD")) {
@@ -451,7 +461,7 @@ static void server() {
   Relay relay(event);
   WS *ws = nullptr;
   RadioRA2 ra2(
-    event, "",
+    event, site.contains("REPEATER") ? site["REPEATER"].get<std::string>() : "",
     site.contains("USER") ? site["USER"].get<std::string>() : "",
     site.contains("PASSWORD") ? site["PASSWORD"].get<std::string>() : "");
   ra2.oninit([&]() { augmentConfig(site, ra2, dmx, relay); initialized = true;})

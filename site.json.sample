@@ -12,6 +12,9 @@
   // If you changed the default password for your Lutron system or if you
   // are using a non-standard port for the DMX bus, you can override these
   // settings here.
+  // "REPEATER": "192.168.1.1", or
+  //             "auto", or
+  //             "find-radiora2"
   // "USER": "lutron",
   // "PASSWORD": "integration",
   // "DMX SERIAL": "/dev/ttyUSB0",
@@ -24,7 +27,14 @@
     "ACTIVATEFAN":  22,
     "COMPUTERISON": 23,
     "RESTARTMODEM": 24,
-    "PLAYJINGLE":   25
+    "PLAYJINGLE":   25,
+    "OPENDOOR":    100,
+    "STARTPUMP":   101
+  },
+  // Define new virtual GPIO pin numbers that map to I2C devices instead.
+  "I2C": {
+    "100": { "BUS": 1, "DEV": 16, "ADDR": 0, "BIT": 0 },
+    "101": { "BUS": 1, "DEV": 16, "ADDR": 1, "BIT": 0 }
   },
   "DMX": {
     // Define DMX dimmers.

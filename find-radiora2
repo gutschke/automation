@@ -1,0 +1,29 @@
+#!/usr/bin/python3
+
+# Sends a multicast query to 224.0.37.42:2647 to locate the Lutron main
+# repeater and returns the IPv4 address.
+import socket
+
+MCAST_ADDR = '224.0.37.42'
+MCAST_PORT = 2647
+
+
+try:
+  sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+  sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+  sock.bind(('0.0.0.0', MCAST_PORT))
+  sock.setsockopt(socket.IPPROTO_IP,
+                  socket.IP_ADD_MEMBERSHIP,
+                  socket.inet_aton(MCAST_ADDR) + socket.inet_aton('0.0.0.0'))
+  sock.settimeout(5)
+  sock.sendto(b'<LUTRON=1>', (MCAST_ADDR, MCAST_PORT))
+  while True:
+    data, addr = sock.recvfrom(4096)
+    items = { k: v for k, v in [ e.split('=', 1)
+                   for e in ('>' + data.decode('utf-8')).split('><')
+                   if '=' in e ] }
+    if items['LUTRON'] == '2' and items['PRODTYPE'] == 'MainRepeater':
+      print('.'.join([str(int(i)) for i in items['IPADDR'].split('.')]), end='')
+      exit(0)
+except:
+  exit(1)

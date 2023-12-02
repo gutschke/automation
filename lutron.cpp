@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <iostream>
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <netdb.h>
 #include <stdio.h>
@@ -512,14 +513,135 @@ void Lutron::login(std::function<void (void)> cb,
     openSocket(result);
   };
 
-  if (!gateway_.empty()) {
+  if (gateway_.empty() || gateway_ == "auto") {
+    // If the user didn't configure a particular IP address for the main
+    // repeater, search for it by sending a request to the multicast address
+    // 224.0.37.42:2647
+    int msock;
+    const auto mcast=(const sockaddr_in){AF_INET,htons(2647),htonl(0xE000252A)};
+    const auto membr=(const ip_mreq){htonl(0xE000252A)};
+    const char req[] = "<LUTRON=1>";
+    if ((msock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) >= 0 &&
+        !setsockopt(msock, SOL_SOCKET, SO_REUSEADDR,
+                    (const int[]){1}, sizeof(int)) &&
+        !bind(msock, (const sockaddr *)&mcast, sizeof(mcast)) &&
+        !setsockopt(msock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &membr,
+                    sizeof(membr)) &&
+        sendto(msock, req, sizeof(req)-1, 0, (const sockaddr *)&mcast,
+               sizeof(mcast)) == sizeof(req)-1) {
+      // We need to parse the reponse from the main repeater (or any other
+      // device that is using this multicast address and sent us a reply). The
+      // response looks similar'ish to XML, but isn't well-formed. So, we can't
+      // use a proper XML parser and have to use an ad hoc parser instead.
+      event_.addPollFd(msock, POLLIN, [=, this](auto) {
+        char buf[1500] = { '>' };
+        const auto rc = read(msock, buf + 1, sizeof(buf) - 2);
+        if (rc > 0) {
+          const std::string resp(buf);
+          bool type = false, prod = false;
+          in_addr addr{0};
+          // There doesn't seem to be any extraneous white space separating
+          // entries, but there also notably aren't any quotes, no escaping,
+          // no closing tags, and tags are always just a single KEY=VALUE pair
+          // with the exception of the overall enclosing <LUTRON=2>...</LUTRON>
+          // marker. Break at "><" positions throughout the received data.
+          for (auto pos = resp.find("><"); pos != std::string::npos; ) {
+            auto eq = pos + 1;
+            // Try to find the position of the equals character, or
+            // alternatively the close of the tag or the end of the buffer.
+            for (;;) {
+              eq = resp.find_first_of("=>", eq + 1);
+              // We got all the way to the end of the buffer. We're done here.
+              if (eq == std::string::npos ||
+                  (resp[eq] == '>' && eq+1 == std::string::npos))
+                goto end;
+              // This is the end of the tag. We never found an equals
+              // character. Skip this tag altogether.
+              if (resp[eq] == '>' && resp[eq+1] == '<') {
+                pos = eq;
+                goto next;
+              }
+              // Found it! Good, now we can parse key and value.
+              if (resp[eq] == '=') {
+                break;
+              }
+            }
+            // Find the close of the tag.
+            { auto cls = eq;
+            for (;;) {
+              cls = resp.find('>', cls + 1);
+              // The tag is incomplete.
+              if (cls == std::string::npos)
+                goto end;
+              // Reached end of buffer.
+              if (cls+1 == std::string::npos)
+                break;
+              // We found a closing tag, but it's not followed by an
+              // expected opening tag nor at the end of the buffer either.
+              // Keep reading. This might just be a closing ">" embedded
+              // in a value.
+              if (resp[cls+1] == '<')
+                break;
+            }
+            // Extract key and value into individual strings.
+            const auto k = std::string(resp, pos + 2, eq - pos - 2);
+            const auto v = std::string(resp, eq + 1, cls - eq - 1);
+            // We expect a response that starts with "<LUTRON=2>".
+            if (k == "LUTRON") {
+              if (v != "2") {
+                goto end;
+              }
+              type = true;
+            } else if (k == "PRODTYPE") {
+              // We only ever want to talk to the RadioRA2 Main Repeater.
+              // We don't know what to do with any other devices that could
+              // conceivably live in the same multicast domain. So, we
+              // disregard any responses that don't match.
+              if (v != "MainRepeater") {
+                goto end;
+              }
+              prod = true;
+            } else if (k == "IPADDR") {
+              // The IPv4 address is a four-tuple with leading zeros. Better
+              // parse it ourselves than rely on library functions that could
+              // get thrown off by this slightly unusual format.
+              uint32_t a = 0;
+              for (auto ptr = v.c_str();;) {
+                a = (a << 8) + strtoul(ptr, (char **)&ptr, 10);
+                if (!*ptr++) break;
+              }
+              addr.s_addr = htonl(a);
+            }
+            pos = cls; }
+          next:;
+          }
+        end:
+          if (type && prod && addr.s_addr) {
+            // This is a little silly. We keep converting back and forth
+            // between "struct in_addr" and "std::string". But by doing so,
+            // can make sure the string is well-formed.
+            this->g_ = std::string(inet_ntoa(addr));
+            DBG("Found gateway at " << this->g_);
+            lookupAddress(this->g_);
+            return false;
+          }
+        }
+        return true;
+      });
+    } else {
+      DBG("Failed to find Lutron main repeater using multicast discovery");
+      if (msock >= 0) {
+        close(msock);
+      }
+    }
+  } else if (gateway_ != "find-radiora2") {
     // If the caller provided the address or name of the server, we can
     // connect directly.
     lookupAddress(gateway_);
   } else {
     // If the address isn't known, use a helper script to scan the network.
     // This operation can take a while, so perform it asynchronously.
-    FILE *fp = popen("./find-radiora2.sh", "r");
+    FILE *fp = popen("./find-radiora2", "r");
     const auto pcloseHandler = timeout_.push([event = &event_, fp]() {
       event->removePollFd(fileno(fp));
       pclose(fp);

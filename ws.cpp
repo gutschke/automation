@@ -105,6 +105,7 @@ WS::WS(Event* event, int port)
 
   // Now we are ready to create the web server. All the hard work happened in
   // the designated initializers.
+  lws_set_log_level(0, 0);
   lws_create_context(&info_);
 }
 

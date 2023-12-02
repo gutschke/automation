@@ -23,6 +23,7 @@ extern "C" {
 int Serial::open(const char *s) {
   int fd = ::open(s, O_RDWR|O_NOCTTY|O_CLOEXEC|O_NONBLOCK|O_SYNC);
   if (fd < 0) {
+    DBGc(1, "Failed to open serial port for DMX: " << s);
     return -1;
   }
   // DMX uses 8N2 at 250,000 baud. We don't care about the receiver, but
@@ -43,6 +44,7 @@ int Serial::open(const char *s) {
   ioctl(fd, TIOCMGET, &status);
   status &= ~TIOCM_RTS;
   ioctl(fd, TIOCMSET, &status);
+  DBGc(2, "Serial port " << s << " open on fd " << fd);
   return fd;
 }
 
@@ -51,10 +53,11 @@ void Serial::brk(int fd) {
   ioctl(fd, TCSBRK, (void *)1);
   // Time between breaks should be at least 1204µs.
   const auto now = Util::micros();
-  static decltype(now) last = 0;
+  static std::remove_const<decltype(now)>::type last = 0;
   if (last && (now - last) < 1204U) {
     usleep(1204 - (now - last));
   }
+  last = Util::micros();
   // Send a break that is at least 92µs long, and that is followed by a
   // MAB (make-after-break) of at least 12µs.
   ioctl(fd, TIOCSBRK, 0);

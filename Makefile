@@ -4,7 +4,7 @@ CFLAGS   := --std=gnu++2a -g -Wall -D_DEFAULT_SOURCE -fno-rtti -fno-exceptions \
             -fno-strict-aliasing -Wno-psabi -I libwebsockets/include
 LFLAGS   := -Wall
 LIBS     := -lpugixml
-ALIBS    := -lfmt libwebsockets/lib/libwebsockets.a -lcap
+ALIBS    := -lfmt -lwebsockets -lcap -li2c
 
 all: automation lutron
 SRCS     := $(shell echo *.cpp)
