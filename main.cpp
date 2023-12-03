@@ -159,9 +159,12 @@ static void readLine(RadioRA2& ra2, DMX& dmx, Relay& relay,
           condPin = atoi(cond.c_str());
           cond = Util::trim(cond.substr(comma + 1));
         }
-        int actionPin = atoi(cond.c_str());
+        char *endptr;
+        int actionPin = (int)strtoul(cond.c_str(), &endptr, 10);
         if (condPin < 0 || relay.get(condPin) == sense) {
-          relay.toggle(actionPin);
+          bool slow = false;
+          for (; *endptr; ++endptr) slow |= (*endptr == 'S');
+          relay.toggle(actionPin, slow);
         }
         break; }
       default:
@@ -346,20 +349,30 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
                 }
               }
             }
-            // Also look up the output pin that should be toggled.
-            const auto actionPin = gpio.find(action);
+            // Also look up the output pin that should be toggled. We detect
+            // any flags that might be present.
+            int actionPin = -1;
+            bool slow = false;
+            for (auto& [k,v] : gpio.items()) {
+              auto flags = std::find(k.begin(), k.end(), '/');
+              if (std::string(k.begin(), flags) == action) {
+                actionPin = v.get<int>();
+                for (; flags != k.end(); ++flags) {
+                  slow |= (*flags == 'S');
+                }
+                break;
+              }
+            }
             // If we were able to successfully parse the GPIO rule, set up
             // a callback function that will be invoked any time the user
             // pushes a button on the keypad.
-            if ((cond.empty() || condPin >= 0) && actionPin != gpio.end()) {
+            if ((cond.empty() || condPin >= 0) && actionPin >= 0) {
               ra2.addToButton(
                 atoi(kp.c_str()), atoi(bt.c_str()),
-                ra2.addOutput(fmt::format("RELAY:{}/{}",
-                  condPin, actionPin->get<int>()),
-                  [&, sense, condPin,
-                   actionPin = actionPin->get<int>()](auto, auto) {
+                ra2.addOutput(fmt::format("RELAY:{}/{}", condPin, actionPin),
+                  [&, sense, condPin, actionPin, slow](auto, auto) {
                     if (condPin < 0 || relay.get(condPin) == sense) {
-                      relay.toggle(actionPin);
+                      relay.toggle(actionPin, slow);
                     }
                   }), -1);
             } else {

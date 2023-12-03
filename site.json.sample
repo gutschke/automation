@@ -23,13 +23,13 @@
   "GPIO": {
     // Symbolic names for GPIO inputs and outputs. Inputs can be inverted
     // by prepending "!".
-    "!DOORISOPEN":  21,
-    "ACTIVATEFAN":  22,
-    "COMPUTERISON": 23,
-    "RESTARTMODEM": 24,
-    "PLAYJINGLE":   25,
-    "OPENDOOR":    100,
-    "STARTPUMP":   101
+    "!DOORISOPEN":   21,
+    "ACTIVATEFAN/S": 22, // This button is S)low to react
+    "COMPUTERISON":  23,
+    "RESTARTMODEM":  24,
+    "PLAYJINGLE":    25,
+    "OPENDOOR":     100,
+    "STARTPUMP":    101
   },
   // Define new virtual GPIO pin numbers that map to I2C devices instead.
   "I2C": {

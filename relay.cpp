@@ -141,7 +141,7 @@ bool Relay::get(int pin, int bias) {
     } else {
       struct gpiohandle_config conf = { };
       conf.flags = GPIOHANDLE_REQUEST_INPUT |
-                   (bias == -1 ? GPIOHANDLE_REQUEST_BIAS_PULL_UP : bias);
+                   (bias == -1 ? GPIOHANDLE_REQUEST_BIAS_PULL_DOWN : bias);
       // If the configuration flags (e.g. for pull up/down bias) have changed,
       // update the settings now.
       if (handles_[pin][0] != (int)conf.flags) {
@@ -160,7 +160,7 @@ bool Relay::get(int pin, int bias) {
   return false;
 }
 
-void Relay::toggle(int pin) {
+void Relay::toggle(int pin, bool slow) {
   // There are two types of devices that we are trying to drive. For
   // keyfob-style remote controls, we turn the digital output to on. This
   // turns the output to 3.3V. It'll be read by a high-Ohm input on the
@@ -179,7 +179,7 @@ void Relay::toggle(int pin) {
   set(pin, true, GPIOHANDLE_REQUEST_BIAS_DISABLE);
 
   // The relay board now reads an "on" condition, but the keyfob is still "off"
-  event_.addTimeout(300, [this, pin]() {
+  event_.addTimeout(slow ? 1200 : 300, [this, pin]() {
     // Next, we also signal an "on" condition to the keyfob remote. The relay
     // board will treat this as "off".
     set(pin, false, GPIOHANDLE_REQUEST_BIAS_DISABLE);

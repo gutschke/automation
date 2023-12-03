@@ -15,7 +15,7 @@ class Relay {
 
   void set(int pin, bool state, int bias = -1);
   bool get(int pin, int bias = -1);
-  void toggle(int pin);
+  void toggle(int pin, bool slow = false);
   void i2c(int id, int bus, int dev, int addr, int bit);
 
  private:
