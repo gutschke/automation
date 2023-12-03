@@ -13,7 +13,7 @@ class DMX {
   void set(int idx, int val, bool fade = true);
 
  private:
-  static const int FADE_TMO = 1000;
+  static const int FADE_TMO = 2500;
 
   void refresh(unsigned when = 1);
   void sendPacket();
@@ -21,7 +21,7 @@ class DMX {
   Event& event_;
   const std::string dev_;
   int fd_;
-  std::vector<unsigned char> values_, phys_, updates_;
+  std::vector<unsigned char> values_, phys_, updates_, fadeFrom_;
   int adj_, fadeTime_;
   void *refreshTmo_;
 };

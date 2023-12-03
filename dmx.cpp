@@ -90,6 +90,9 @@ void DMX::set(int idx, int val, bool fade) {
     phys_[idx] = val;
   } else {
     adj_ = Util::millis()-5;
+    if ((int)fadeFrom_.size() <= idx)
+      fadeFrom_.resize(idx + 1, 0);
+    fadeFrom_[idx] = phys_[idx];
   }
 
   // If the same parameter was updated more than once without the data being
@@ -119,17 +122,17 @@ void DMX::sendPacket() {
   // frequently when values are actively changing.
   int nextTmo = 200;
   if (adj_) {
-    // This code doesn't need to be very precise. We only roughly track the
-    // desired curve to the elapsed time. But that's good enough to achieve
-    // a visually pleasing soft-fade for DMX outputs.
     double t = std::min(1.0, (Util::millis() - adj_)/(double)fadeTime_);
     bool fading = false;
     for (unsigned i = 0; i < phys_.size(); ++i) {
       if (phys_[i] != values_[i]) {
+        if (values_[i] == phys_[i])
+          continue;
         fading = true;
-        DBG("Fading from " << (int)phys_[i] << " to "
-            << phys_[i]+(values_[i] - phys_[i])*pow(t, 0.3) << ", t = " << t);
-        phys_[i] += (values_[i] - phys_[i])*pow(t, 0.3);
+        double curve = values_[i] > fadeFrom_[i] ? 0.1 : 0.2;
+        phys_[i] =
+          std::max(0, std::min(255, fadeFrom_[i] +
+          (int)round(pow(t, curve)*(values_[i] - fadeFrom_[i]))));
       }
     }
     if (!fading || t == 1.0) {
