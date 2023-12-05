@@ -30,7 +30,8 @@ RadioRA2::RadioRA2(Event& event, const std::string& gateway,
     checkStarted_(0),
     checkFinished_(0),
     uncertain_(0),
-    schemaSock_(-1) {
+    schemaSock_(-1),
+    timeclockMonitor_([](auto){}) {
   setlocale(LC_NUMERIC, "C");
   lutron_.oninit([this](auto cb) { init(cb); })
          .oninput([this](const std::string& line) { readLine(line); })
@@ -210,6 +211,8 @@ void RadioRA2::readLine(const std::string& line) {
         }
       }
     }
+  } else if (Util::starts_with(line, "~TIMECLOCK,")) {
+    timeclockMonitor_(std::string(line, 11));
   } else if (Util::starts_with(line, "~SYSTEM,1,")) {
     // When the controller tells us the system time, compare it to our own
     // understanding of time. If there is a significant difference, we can
@@ -760,6 +763,10 @@ void RadioRA2::addButtonListener(int kp, int bt,
       keypad->second.listeners.push_back(cb);
     }
   }
+}
+
+void RadioRA2::monitorTimeclock(std::function<void (const std::string&)> cb) {
+  timeclockMonitor_ = cb;
 }
 
 void RadioRA2::monitorOutput(int id, std::function<void (int level)> cb) {

@@ -60,7 +60,8 @@
   },
   "WATCH" : {
     // We can trigger a script to execute, whenever an output changes its level.
-    "3": "outputchanged.sh"
+    "3": "outputchanged.sh",
+    "TIMECLOCK": "modechanged.sh"
   },
   "KEYPAD ORDER" : [ 2, "Other Lights", 1 ],
   "KEYPAD": {

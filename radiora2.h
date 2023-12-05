@@ -45,6 +45,7 @@ class RadioRA2 {
     schemaInvalid_ = schemaInvalid; return *this; }
   void addButtonListener(int kp, int bt,
         std::function<void (int kp, int bt, bool on, bool isLong, int num)> cb);
+  void monitorTimeclock(std::function<void (const std::string& tc)> cb);
   void monitorOutput(int id, std::function<void (int level)> cb);
   int addOutput(const std::string name, std::function<void (int, bool)> cb);
   void addToButton(int kp, int bt, int id, int level, bool makeToggle = false);
@@ -303,5 +304,6 @@ class RadioRA2 {
   std::vector<NamedOutput> namedOutput_;
   std::set<int> suppressDummyDimmer_;
   std::map<int, unsigned> releaseDummyDimmer_;
+  std::function<void (const std::string&)> timeclockMonitor_;
   std::map<int, std::function<void (int)>> outputMonitor_;
 };
