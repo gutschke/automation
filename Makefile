@@ -6,10 +6,11 @@ LFLAGS   := -Wall
 LIBS     := -lpugixml
 ALIBS    := -lfmt -lwebsockets -lcap -li2c
 
-all: automation lutron
+all: automation lutron relay
 SRCS     := $(shell echo *.cpp)
-AUTOMAT  := $(shell echo *.cpp | xargs -n1 | fgrep -v cmd)
-LUTRON   := $(shell echo *.cpp | xargs -n1 | fgrep -v main)
+AUTOMAT  := $(shell echo *.cpp | xargs -n1 | fgrep -v cmd | fgrep -v relaytest)
+LUTRON   := $(shell echo *.cpp | xargs -n1 | fgrep -v main | grep -v relaytest)
+RELAY    := $(shell echo *.cpp | xargs -n1 | fgrep -v cmd | grep -v main)
 
 ifneq (clean, $(filter clean, $(MAKECMDGOALS)))
   -include .build/debug
@@ -32,7 +33,7 @@ endif
 
 .PHONY: clean
 clean:
-	rm -rf automation lutron .build
+	rm -rf automation lutron relay .build
 	@[ "$(DEBUG)" = 1 ] && { mkdir -p .build; { echo 'DEBUG ?= 1'; echo 'override OLDDEBUG := 1'; } >.build/debug; } || :
 
 automation: $(patsubst %.cpp,.build/%.o,$(AUTOMAT)) .build/debug
@@ -40,6 +41,9 @@ automation: $(patsubst %.cpp,.build/%.o,$(AUTOMAT)) .build/debug
 
 lutron: $(patsubst %.cpp,.build/%.o,$(LUTRON)) .build/debug
 	$(CXX) $(DFLAGS) $(LFLAGS) -o $@ $(patsubst %.cpp,.build/%.o,$(LUTRON)) $(LIBS)
+
+relay: $(patsubst %.cpp,.build/%.o,$(RELAY)) .build/debug
+	$(CXX) $(DFLAGS) $(LFLAGS) -o $@ $(patsubst %.cpp,.build/%.o,$(RELAY)) $(LIBS)
 
 .build/%.o: %.cpp | .build/debug
 	@mkdir -p .build

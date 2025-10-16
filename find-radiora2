@@ -2,7 +2,9 @@
 
 # Sends a multicast query to 224.0.37.42:2647 to locate the Lutron main
 # repeater and returns the IPv4 address.
+import os
 import socket
+import sys
 
 MCAST_ADDR = '224.0.37.42'
 MCAST_PORT = 2647
@@ -24,6 +26,8 @@ try:
                    if '=' in e ] }
     if items['LUTRON'] == '2' and items['PRODTYPE'] == 'MainRepeater':
       print('.'.join([str(int(i)) for i in items['IPADDR'].split('.')]), end='')
-      exit(0)
+      sys.stdout.flush()
+      os._exit(0)
 except:
+  print('10.10.50.16', end='')
   exit(1)
