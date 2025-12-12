@@ -29,5 +29,5 @@ try:
       sys.stdout.flush()
       os._exit(0)
 except:
-  print('10.10.50.16', end='')
+  print('192.168.1.1', end='')
   exit(1)
