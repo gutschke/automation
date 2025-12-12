@@ -176,22 +176,59 @@ static void readLine(RadioRA2& ra2, DMX& dmx, Relay& relay,
   }
 }
 
-static void runScript(RadioRA2& ra2, const std::string& script) {
+static void runScript(Event& event, RadioRA2& ra2, const std::string& script) {
   ra2.updateEnvironment();
+
+  // Open the script. This forks the process with the current environment.
   FILE *fp = popen(script.c_str(), "r");
-  char *line = nullptr;
-  size_t len;
-  while (fp && (len = 0, getline(&line, &len, fp)) >= 0) {
-    ra2.command(Util::trim(line));
-    free(line);
-    line = nullptr;
-  }
-  free(line);
-  pclose(fp);
+  if (!fp) return;
+
+  // Set the file descriptor to non-blocking mode so read() doesn't freeze
+  int fd = fileno(fp);
+  int flags = fcntl(fd, F_GETFL, 0);
+  fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+  // Monitor the file descriptor for output
+  event.addPollFd(fd, POLLIN,
+                  [&ra2, fp, buf = std::string()](pollfd *pfd) mutable {
+    char buffer[1024];
+    ssize_t rc = read(pfd->fd, buffer, sizeof(buffer));
+
+    if (rc > 0) {
+      buf.append(buffer, rc);
+      size_t pos;
+
+      // Process complete lines
+      while ((pos = buf.find('\n')) != std::string::npos) {
+        std::string line = Util::trim(buf.substr(0, pos));
+        if (!line.empty()) {
+          ra2.command(line);
+        }
+        buf.erase(0, pos + 1);
+      }
+      return true; // Wait for more lines to become readable
+    } else if (rc < 0 &&
+               (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+      return true; // No data available right now, return to event loop
+    } else {
+      // End of file (rc=0) or error. Process any trailing data that didn't
+      // end in a newline
+      std::string line = Util::trim(buf);
+      if (!line.empty()) {
+        ra2.command(line);
+      }
+
+      // Close pipe. Note that pclose() waits for child exit, but usually
+      // instantaneous here.
+      pclose(fp);
+
+      return false; // Automatically removes this callback from the event loop
+    }
+  });
 }
 
-static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
-                          Relay& relay) {
+static void augmentConfig(Event& event, const json& site, RadioRA2& ra2,
+                          DMX& dmx, Relay& relay) {
   // Out of the box, our code does not implement any policy and won't really
   // change the behavior of the Lutron device. But given a "site.json"
   // configuration file, it can integrate non-Lutron devices into the
@@ -219,7 +256,7 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
     const auto& watch = site["WATCH"];
     for (const auto& [id_, script] : watch.items()) {
       if (id_ == "TIMECLOCK") {
-        ra2.monitorTimeclock([&ra2, &script](const std::string& s) {
+        ra2.monitorTimeclock([&event, &ra2, &script](const std::string& s) {
             unsetenv("KEYPAD");
             unsetenv("BUTTON");
             unsetenv("ON");
@@ -229,11 +266,11 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
             unsetenv("LEVEL");
             unsetenv("level");
             setenv("TIMECLOCK", s.c_str(), 1);
-            runScript(ra2, script);
+            runScript(event, ra2, script);
           });
       } else {
         const auto id = atoi(id_.c_str());
-        ra2.monitorOutput(id, [id, &ra2, &script](int level) {
+        ra2.monitorOutput(id, [id, &event, &ra2, &script](int level) {
             unsetenv("KEYPAD");
             unsetenv("BUTTON");
             unsetenv("ON");
@@ -244,7 +281,7 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
             setenv("LEVEL",
                    fmt::format("{}.{:02}", level/100, level%100).c_str(), 1);
             setenv("level", fmt::format("{}", level).c_str(), 1);
-            runScript(ra2, script);
+            runScript(event, ra2, script);
           });
       }
     }
@@ -324,7 +361,8 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
             if (!script.empty()) {
               ra2.addButtonListener(
                 atoi(kp.c_str()), atoi(bt.c_str()),
-                [script, &ra2](int kp, int bt, bool on, bool isLong, int num) {
+                [script, &event, &ra2](
+                     int kp, int bt, bool on, bool isLong, int num) {
                   unsetenv("TIMECLOCK");
                   unsetenv("OUTPUT");
                   unsetenv("LEVEL");
@@ -335,7 +373,7 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
                   else      unsetenv("LONG");
                   if (num) setenv("NUMTAPS", fmt::format("{}", num).c_str(), 1);
                   else   unsetenv("NUMTAPS");
-                  runScript(ra2, script);
+                  runScript(event, ra2, script);
                 });
             }
           } else if (at == "RELAY" && site.contains("GPIO")) {
@@ -519,7 +557,8 @@ static void server() {
     event, site.contains("REPEATER") ? site["REPEATER"].get<std::string>() : "",
     site.contains("USER") ? site["USER"].get<std::string>() : "",
     site.contains("PASSWORD") ? site["PASSWORD"].get<std::string>() : "");
-  ra2.oninit([&]() { augmentConfig(site, ra2, dmx, relay); initialized = true;})
+  ra2.oninit([&]() {
+    augmentConfig(event, site, ra2, dmx, relay); initialized = true;})
      .oninput([&](const std::string& line, const std::string&context,bool fade){
                 readLine(ra2, dmx, relay, line, context, fade); })
      .onledstate([&](int kp, int led, bool state, int level) {
