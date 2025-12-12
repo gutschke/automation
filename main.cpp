@@ -601,6 +601,29 @@ int main(int argc, char *argv[]) {
       // restarts the child, if we don't see a regular heartbeat.
       close(childFd[1]);
       Event event;
+
+      sigset_t mask;
+      sigemptyset(&mask);
+      sigaddset(&mask, SIGTERM);
+      sigaddset(&mask, SIGINT);
+      if (sigprocmask(SIGBLOCK, &mask, nullptr) < 0) {
+        DBG("Failed to block signals in parent");
+      }
+      int sfd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
+      if (sfd >= 0) {
+        event.addPollFd(sfd, POLLIN, [&](pollfd *pfd) {
+          struct signalfd_siginfo fdsi;
+          if (read(sfd, &fdsi, sizeof(fdsi)) == sizeof(fsdi)) {
+            // Forward the signal to the child to ensure it stops
+            kill(p, fdsi.ssi_signo);
+            // Do not exit the loop yet. We muust wait for the child to close
+            // the pipe (childFd[0]), which happens when it exits. This
+            // ensures we don't return to systemd until child releases all
+            // resources.
+          }
+          return true;
+        });
+      }
       bool restart = false;
       void *tmo = nullptr;
       const auto resetTmo = [&]() {
