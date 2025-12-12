@@ -1,6 +1,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
+#include <signal.h>
+#include <sys/signalfd.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -482,6 +484,29 @@ static void server() {
   // Create all the different objects that make up our server and connect
   // them to each other. Then enter the event loop.
   Event event;
+
+  // Block signals so they can be handled via the file descriptor
+  sigset_t mask;
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGTERM);
+  sigaddset(&mask, SIGINT); // Handle Ctrl+C gracefully too
+  if (sigprocmask(SIG_BLOCK, &mask, nullptr) == -1) {
+      DBG("Failed to block signals");
+  }
+
+  // Create a file descriptor for signals
+  int sfd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
+  if (sfd >= 0) {
+    event.addPollFd(sfd, POLLIN, [&](pollfd* pfd) {
+      struct signalfd_siginfo fdsi;
+      if (read(sfd, &fdsi, sizeof(fdsi)) == sizeof(fdsi)) {
+        DBG("Received signal " << fdsi.ssi_signo << ", exiting...");
+        event.exitLoop(); // This triggers the graceful shutdown
+      }
+      return true;
+    });
+  }
+
   dmxRemoteServer(event); // For debugging purposes only
 
   DBG("Starting...");
