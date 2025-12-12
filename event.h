@@ -40,8 +40,9 @@ class Event {
   void recomputeTimeoutsAndFds();
 
   std::vector<PollFd *> pollFds_, *newFds_ = nullptr;
-  std::vector<PollFd *> disposal_;
   std::vector<Timeout *> timeouts_, *newTimeouts_ = nullptr;
+  std::vector<PollFd *> freePollFds_;
+  std::vector<Timeout *> freeTimeouts_;
   std::vector<std::function<void ()>> later_;
   std::vector<std::function<void (unsigned)> *> loop_;
   pollfd *fds_ = nullptr;
