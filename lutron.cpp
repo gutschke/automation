@@ -28,6 +28,10 @@ Lutron::Lutron(Event& event,
 
 Lutron::~Lutron() {
   DBG("~Lutron()");
+  // Prevent the "closed_" callback from running after the owner (RadioRA2)
+  // has already been destroyed.
+  closed_ = nullptr;
+
   // After the destructor has run, the "closed_()" callback is no longer
   // valid. We suppress execution by setting "isConnected_" to "false".
   // Of course, during normal execution, the destructor shouldn't ever
@@ -863,6 +867,16 @@ void Lutron::readLine() {
       sock_ = -1;
     } else {
       ahead_ = ahead_ + std::string(buf, rc);
+
+      if (ahead_.size() > 65536) {
+        // We should never receive an indefinite stream of non-newline
+        // characters. If that does happen, something went very wrong and
+        // we better reset the connection.
+        DBG("Buffer overflow, disconnecting");
+        close(sock_);
+        sock_ = -1;
+        ahead_.clear();
+      }
     }
     readLine();
     return true;

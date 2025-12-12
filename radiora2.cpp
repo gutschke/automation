@@ -299,10 +299,8 @@ void RadioRA2::init(std::function<void (void)> cb) {
     getSchema((const sockaddr&)addr, addrLen, [=, this]() {
       refreshCurrentState([=, this]() {
         // If this is the first time that we have seen any automation schema,
-        // there will be init_ handlers that need to be notified. Remove them
-        // afterwards.
-        const auto init = std::move(init_);
-        for (const auto& o : init) {
+        // there will be init_ handlers that need to be notified.
+        for (const auto& o : init_) {
           if (o) {
             event_.runLater(o);
           }
@@ -619,6 +617,13 @@ void RadioRA2::refreshCurrentState(std::function<void ()> cb) {
   // Speculatively initialize things as fast as we can, and then fix things
   // up asynchronously as needed.
   command("", [cb, this](auto) {
+    // Clear old listeners to prevent duplication.
+    for (auto& [_, dev] : devices_) {
+      for (auto& [_, comp] : dev.components) {
+        comp.listeners.clear();
+      }
+    }
+
     if (cb) {
       cb();
     }
