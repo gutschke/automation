@@ -201,7 +201,7 @@ static void augmentConfig(const json& site, RadioRA2& ra2, DMX& dmx,
   if (site.contains("DMX")) {
     const auto& dmxIds = site["DMX"];
     for (const auto& [name, params] : dmxIds.items()) {
-      if (params.size() <= 0 || !params[0].is_number()) {
+      if (!params.is_array() || params.size() <= 0 || !params[0].is_number()) {
         continue;
       }
       ra2.addOutput(
