@@ -135,8 +135,8 @@ bool Event::removePollFd(int fd, short events) {
       // It is common for removePollFd() to be called by the callback.
       // But that lambda object includes a lot of state that cannot safely
       // be destroyed while the callback is running. Push the actual
-      // destruction onto the "later_" callback.
-      runLater([=]() { delete e; });
+      // destruction onto the "disposal_" callback.
+      disposal_.push_back(e);
       return true;
     }
     return false;
@@ -170,8 +170,8 @@ bool Event::removePollFd(void *handle) {
       // It is common for removePollFd() to be called by the callback.
       // But that lambda object includes a lot of state that cannot safely
       // be destroyed while the callback is running. Push the actual
-      // destruction onto the "later_" callback.
-      runLater([=]() { delete e; });
+      // destruction onto the "disposal_" callback.
+      disposal_.push_back(e);
       return true;
     }
     return false;
@@ -277,5 +277,11 @@ void Event::recomputeTimeoutsAndFds() {
     timeouts_.swap(*newTimeouts_);
     delete newTimeouts_;
     newTimeouts_ = nullptr;
+  }
+  if (!disposal_.empty()) {
+    for (auto p : disposal_) {
+      delete p;
+    }
+    disposal_.clear();
   }
 }
