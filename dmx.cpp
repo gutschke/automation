@@ -65,6 +65,7 @@ void DMX::set(int idx, int val, bool fade) {
   // We should always send at least 24 light levels in a DMX package. This
   // minimum package size ensures that we don't exceed DMX timing parameters.
   val = std::min(std::max(0, val), 255);
+  if (idx <= 0 || idx > 512) return;
   if ((int)values_.size() <= std::max(23, idx)) {
     values_.resize(std::max(24, idx + 1), 0);
     phys_.resize(std::max(24, idx + 1), 0);
@@ -75,10 +76,11 @@ void DMX::set(int idx, int val, bool fade) {
   }
   DBG("DMX::set(" << idx << ", " << val << ", " << (fade?"true":"false") <<")");
 
-  // Some DMX controllers don't like being turn all the way on without giving
-  // them a little time to ramp up. Also, slowly fading the lights looks nicer.
-  // We keep track of the desired nominal output level in "values_", but
-  // slowly approach this number by adjusting the "phys_" setting.
+  // Some DMX controllers don't like being turned all the way on without
+  // giving them a little time to ramp up. Also, slowly fading the lights
+  // looks nicer. We keep track of the desired nominal output level in
+  // "values_", but slowly approach this number by adjusting the "phys_"
+  // setting.
   fadeTime_ = std::max(1.0, FADE_TMO*std::abs(values_[idx] - val)/255.0);
   DBG("fadeTime = " << fadeTime_);
   values_[idx] = val;
