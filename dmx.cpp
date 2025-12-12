@@ -79,7 +79,7 @@ void DMX::set(int idx, int val, bool fade) {
   // them a little time to ramp up. Also, slowly fading the lights looks nicer.
   // We keep track of the desired nominal output level in "values_", but
   // slowly approach this number by adjusting the "phys_" setting.
-  fadeTime_ = std::max(1, FADE_TMO*abs(values_[idx] - val)/255);
+  fadeTime_ = std::max(1.0, FADE_TMO*std::abs(values_[idx] - val)/255.0);
   DBG("fadeTime = " << fadeTime_);
   values_[idx] = val;
   if (!fade
