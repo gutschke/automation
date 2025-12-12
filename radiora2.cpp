@@ -397,6 +397,19 @@ void RadioRA2::getSchema(const sockaddr& addr, socklen_t len,
           // a short read. Then return to the event loop.
           lutron_.initStillWorking();
           schema += std::string(buf, rc);
+
+          if (schema.size() > 1024*1024) {
+            DBG("Schema download exceeded 1MB limit; aborting connection");
+            close(schemaSock_);
+            schemaSock_ = -1;
+
+            // Force a full connection reset to recover
+            lutron_.closeSock();
+            if (cb) {
+              cb();
+            }
+            return false;
+          }
           if (rc == sizeof(buf)) {
             continue;
           }
