@@ -320,7 +320,19 @@ void WS::broadcast(const std::string& s) {
 // DBG("WebSocket::broadcast(\"" << s << "\")");
   // Newly enqueued data must be sent to all listening clients when they
   // become writable.
-  for (auto& [ wsi, pending ] : wsi_) {
+  // Create copy of clients to avoid issues with concurrent modifications
+  // while looping over them.
+  std::vector<lws *> clients;
+  clients.reserve(wsi_.size());
+  for (auto& [ wsi, _ ] : wsi_) {
+    clients.push_back(wsi);
+  }
+  for (auto wsi : clients) {
+    // If client was closed while iterating, skip it now.
+    auto it = wsi_.find(wsi);
+    if (it == wsi_.end()) continue;
+
+    auto *pending = it->second;
     if (pending->size() > LWS_PRE) {
       pending->append(1, ' ');
     }
