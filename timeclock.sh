@@ -23,10 +23,12 @@ xmllint --format --xpath '//TimeClockEvent' .lutron.xml |
   sed 's/>.*//;/Mode="[^"]*Normal/t;d' |
   while read -r line; do
     # Extract attributes for each event
-    while read kv; do
-      eval "x${kv}"
-    done <<<$(egrep '[a-zA-Z]+="[^"]*"' <<<${line// /
-})
+    xDays='' xType='' xTime='' xEventNumber='' xOffset='' xVariableEvent=''
+    while IFS='=' read -r key value; do
+      value="${value%\"}"
+      value="${value#\"}"
+      printf -v "x${key}" '%s' "${value}"
+    done < <(egrep -E -o '[a-zA-Z]+="[^"]*"' <<<"${line}")
     # Only execute events that match the current weekday
     if ! [[ "${xDays}" =~ "$(date +%A)" ]]; then
       echo "Skipping event for ${xDays}" >&2
