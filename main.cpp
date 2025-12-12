@@ -543,7 +543,9 @@ int main(int argc, char *argv[]) {
         event.removeTimeout(tmo);
         tmo = event.addTimeout(120*1000, [&]() {
           restart = true;
-          kill(p, SIGKILL);
+          kill(p, SIGTERM);
+          // Force kill, if it doesn't exit within 5 seconds
+          event.addTimeout(5000, [p]() { kill(p, SIGKILL); });
         });
       };
       resetTmo();
@@ -561,7 +563,8 @@ int main(int argc, char *argv[]) {
               // already started setting up our internal data structure with
               // a schema that is now out of date. A full restart is the
               // easiest solution to get back into a defined state.
-              kill(p, SIGKILL);
+              kill(p, SIGTERM);
+              event.addTimeout(5000, [p]() { kill(p, SIGKILL); });
               restart = true;
             } else {
               // We received a heartbeat signal. Tell the watchdog timer that
