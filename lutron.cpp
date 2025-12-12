@@ -339,14 +339,29 @@ void Lutron::sendData(const std::string& data,
             atPrompt_ = false;
             DBGc(1, "write(\"" << Util::trim(data) << "\")");
             const auto rc = write(sock_, data.c_str(), data.size());
-            if (rc <= 0) {
-              // Failed to write any data.
+            if (rc < 0) {
+              if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+                // Not an error, just a full buffer. Schedule to try again.
+                // Calling sendData() recursively registers a new POLLOUT
+                // handler.
+                sendData(data, cb, err, "", false);
+                return true;
+              }
+              // Failed to write any data. This is a real fatal network error
+              // such as a closed socket.
+              closeSock();
+              if (err) {
+                err();
+              }
+            } else if (rc == 0) {
+              // Write returned 0. Treat this as a closed connection.
               closeSock();
               if (err) {
                 err();
               }
             } else if (rc < (decltype(rc))data.size()) {
-              // Incomplete write. Keep going.
+              // Incomplete write. The buffer filled up partway through. Retry
+              // sending only the remaining data.
               sendData(data.substr(rc), cb, err, "", false);
             } else {
               // All done. We have written all data.
