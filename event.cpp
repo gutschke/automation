@@ -13,17 +13,12 @@ Event::Event() {
 
 Event::~Event() {
   recomputeTimeoutsAndFds();
-  while (!later_.empty()) {
-    // There could be critical clean-up happening as part of the
-    // later_ callbacks. Better call these, even though we are in the
-    // process of shutting down.
-    const auto later = std::move(later_);
-    for (const auto& cb : later) {
-      if (cb) {
-        cb();
-      }
-    }
-  }
+
+  // Do not execute pending "later_" callbacks. The objects that these callbacks
+  // reference have likely already been destroyed. Executing them now leads to
+  // use-after-free crashes.
+  later_.clear();
+
   // Ideally, the caller should ensure that there are no unresolved
   // pending tasks. But if there are, we'll abandon them. Hopefully, that's
   // OK and they didn't involve any dangling objects.
