@@ -1075,10 +1075,14 @@ void RadioRA2::setDMXorLutron(int id, int level, bool fade, bool suppress,
       // NoUpdate must not be set on the very final call, as that call both
       // flushes our cached state to the Lutron system and removes the
       // suppression.
+      std::function<void (const std::string&)> cb = nullptr;
+      std::function<void ()> err = nullptr;
+      if (suppress) {
+        cb  = [this, id](auto) { suppressLutronDimmer(id, false); };
+        err = [this, id]()     { suppressLutronDimmer(id, false); };
+      }
       command(fmt::format("#OUTPUT,{},1,{}.{:02}",
-                          id, level/100, level%100),
-              suppress ? [this, id](auto) { suppressLutronDimmer(id, false); }
-                       : (std::function<void (const std::string&)>)nullptr);
+                          id, level/100, level%100), cb, err);
     }
     if (out.level != level) {
       out.level = level;
