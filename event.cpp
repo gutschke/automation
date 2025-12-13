@@ -223,7 +223,7 @@ void Event::removeLoop(void *handle) {
 }
 
 void Event::compact() {
-  // Compact PollFds
+  // Compact pollfds
   if (!pollFds_.empty()) {
       pollFds_.erase(std::remove_if(pollFds_.begin(), pollFds_.end(),
         [](PollFd* p) {
@@ -240,7 +240,7 @@ void Event::compact() {
       addedFds_.clear();
   }
 
-  // Compact Timeouts
+  // compact timeouts
   if (!timeouts_.empty()) {
       timeouts_.erase(std::remove_if(timeouts_.begin(), timeouts_.end(),
         [](Timeout* t) {
