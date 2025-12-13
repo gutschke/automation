@@ -179,52 +179,74 @@ static void readLine(RadioRA2& ra2, DMX& dmx, Relay& relay,
 static void runScript(Event& event, RadioRA2& ra2, const std::string& script) {
   ra2.updateEnvironment();
 
-  // Open the script. This forks the process with the current environment.
-  FILE *fp = popen(script.c_str(), "r");
-  if (!fp) return;
+  // Create a non-blocking pipe for the script's output
+  int pipefd[2];
+  if (pipe2(pipefd, O_CLOEXEC | O_NONBLOCK)) {
+    DBG("Failed to create pipe");
+    return;
+  }
 
-  // Set the file descriptor to non-blocking mode so read() doesn't freeze
-  int fd = fileno(fp);
-  int flags = fcntl(fd, F_GETFL, 0);
-  fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+  pid_t pid = fork();
+  if (pid == 0) {
+    // Child process
+    close(pipefd[0]);    // Close the read end
+    dup2(pipefd[1], 1);  // Redirect stdout to the pipe
+    close(pipefd[1]);    // Close the original write end
 
-  // Monitor the file descriptor for output
-  event.addPollFd(fd, POLLIN,
-                  [&ra2, fp, buf = std::string()](pollfd *pfd) mutable {
-    char buffer[1024];
-    ssize_t rc = read(pfd->fd, buffer, sizeof(buffer));
+    // Unblock signals! The daemon blocked them, but the script
+    // needs them to function correctly (e.g. ctrl+c, SIGTERM).
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigprocmask(SIG_SETMASK, &mask, nullptr);
 
-    if (rc > 0) {
-      buf.append(buffer, rc);
-      size_t pos;
+    // Replace process with the shell
+    execl("/bin/sh", "sh", "-c", script.c_str(), (char *)nullptr);
+    _exit(127); // If exec fails
+  } else if (pid > 0) {
+    // Parent process
+    close(pipefd[1]); // Close the write end so we get EOF when child is done
 
-      // Process complete lines
-      while ((pos = buf.find('\n')) != std::string::npos) {
-        std::string line = Util::trim(buf.substr(0, pos));
+    // Monitor the pipe for output asynchronously
+    event.addPollFd(pipefd[0], POLLIN,
+      [&ra2, fd = pipefd[0], buf = std::string()](pollfd *pfd) mutable {
+      char buffer[1024];
+      ssize_t rc = read(fd, buffer, sizeof(buffer));
+
+      if (rc > 0) {
+        // Data received: Buffer it and extract complete lines
+        buf.append(buffer, rc);
+        size_t pos;
+        while ((pos = buf.find('\n')) != std::string::npos) {
+          std::string line = Util::trim(buf.substr(0, pos));
+          if (!line.empty()) {
+            ra2.command(line);
+          }
+          buf.erase(0, pos + 1);
+        }
+        return true;
+      } else if (rc < 0 &&
+                 (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+        // No data ready, keep listening
+        return true;
+      } else {
+        // EOF or error. The script finished or crashed. Process any final
+        // lingering data.
+        std::string line = Util::trim(buf);
         if (!line.empty()) {
           ra2.command(line);
         }
-        buf.erase(0, pos + 1);
-      }
-      return true; // Wait for more lines to become readable
-    } else if (rc < 0 &&
-               (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
-      return true; // No data available right now, return to event loop
-    } else {
-      // End of file (rc=0) or error. Process any trailing data that didn't
-      // end in a newline
-      std::string line = Util::trim(buf);
-      if (!line.empty()) {
-        ra2.command(line);
-      }
 
-      // Close pipe. Note that pclose() waits for child exit, but usually
-      // instantaneous here.
-      pclose(fp);
-
-      return false; // Automatically removes this callback from the event loop
-    }
-  });
+        // Stop monitoring this FD. Note that we do not call waitpid() here.
+        // The main loop handles SIGCHLD.
+        close(fd);
+        return false;
+      }
+    });
+  } else {
+    close(pipefd[0]);
+    close(pipefd[1]);
+    DBG("Failed to fork script process");
+  }
 }
 
 static void augmentConfig(Event& event, const json& site, RadioRA2& ra2,
@@ -527,8 +549,9 @@ static void server() {
   sigset_t mask;
   sigemptyset(&mask);
   sigaddset(&mask, SIGTERM);
-  sigaddset(&mask, SIGINT); // Handle Ctrl+C gracefully too
-  if (sigprocmask(SIG_BLOCK, &mask, nullptr) == -1) {
+  sigaddset(&mask, SIGINT); // Handle ctrl+c gracefully too
+  sigaddset(&mask, SIGCHLD);
+  if (sigprocmask(SIG_BLOCK, &mask, nullptr) < 0) {
       DBG("Failed to block signals");
   }
 
@@ -538,8 +561,12 @@ static void server() {
     event.addPollFd(sfd, POLLIN, [&](pollfd* pfd) {
       struct signalfd_siginfo fdsi;
       if (read(sfd, &fdsi, sizeof(fdsi)) == sizeof(fdsi)) {
-        DBG("Received signal " << fdsi.ssi_signo << ", exiting...");
-        event.exitLoop(); // This triggers the graceful shutdown
+        if (fdsi.ssi_signo == SIGCHLD) {
+          while (waitpid(-1, nullptr, WNOHANG) > 0) { }
+        } else {
+          DBG("Received signal " << fdsi.ssi_signo << ", exiting...");
+          event.exitLoop(); // This triggers the graceful shutdown
+        }
       }
       return true;
     });
