@@ -1,7 +1,7 @@
 # CXX    := clang++-6.0
 CXX      := g++
 CFLAGS   := --std=gnu++2a -g -Wall -D_DEFAULT_SOURCE -fno-rtti -fno-exceptions \
-            -fno-strict-aliasing -Wno-psabi -I libwebsockets/include
+            -fno-strict-aliasing -Wno-psabi
 LFLAGS   := -Wall
 LIBS     := -lpugixml
 ALIBS    := -lfmt -lwebsockets -lcap -li2c
@@ -43,7 +43,7 @@ lutron: $(patsubst %.cpp,.build/%.o,$(LUTRON)) .build/debug
 	$(CXX) $(DFLAGS) $(LFLAGS) -o $@ $(patsubst %.cpp,.build/%.o,$(LUTRON)) $(LIBS)
 
 relay: $(patsubst %.cpp,.build/%.o,$(RELAY)) .build/debug
-	$(CXX) $(DFLAGS) $(LFLAGS) -o $@ $(patsubst %.cpp,.build/%.o,$(RELAY)) $(LIBS)
+	$(CXX) $(DFLAGS) $(LFLAGS) -o $@ $(patsubst %.cpp,.build/%.o,$(RELAY)) $(ALIBS)
 
 .build/%.o: %.cpp | .build/debug
 	@mkdir -p .build

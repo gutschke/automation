@@ -1,7 +1,9 @@
 #pragma once
 
+#include <fmt/core.h>
 #include <sys/socket.h>
 
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <pugixml.hpp>
@@ -64,17 +66,6 @@ class RadioRA2 {
   }
   std::string getKeypads(const std::vector<int>& order);
   void updateEnvironment();
-
- private:
-  const unsigned int SHORT_REOPEN_TMO =  5000;
-  const unsigned int LONG_REOPEN_TMO  = 60000;
-  const unsigned int ALIVE_INTERVAL   = 60000;
-  const unsigned int ALIVE_CMD_TMO    =  5000;
-  const unsigned int LONGPICO         =   500;
-  const unsigned int DOUBLETAP        =   900;
-  const unsigned int LONGDOUBLETAP    =  2500;
-  const unsigned int DIMLEVELS        =    15;
-  const unsigned int DIMRATE          =    25; // 25% change per second
 
 
   enum ActionType {
@@ -141,6 +132,18 @@ class RadioRA2 {
     MONITOR_TEMPERATURE = 27,
     MONITOR_ALL         = 255
   };
+
+ private:
+  const unsigned int SHORT_REOPEN_TMO =  5000;
+  const unsigned int LONG_REOPEN_TMO  = 60000;
+  const unsigned int ALIVE_INTERVAL   = 60000;
+  const unsigned int ALIVE_CMD_TMO    =  5000;
+  const unsigned int LONGPICO         =   500;
+  const unsigned int DOUBLETAP        =   900;
+  const unsigned int LONGDOUBLETAP    =  2500;
+  const unsigned int DIMLEVELS        =    15;
+  const unsigned int DIMRATE          =    25; // 25% change per second
+
 
   enum LedLogic {
     LED_UNKNOWN     =  0,
@@ -306,4 +309,24 @@ class RadioRA2 {
   std::map<int, unsigned> releaseDummyDimmer_;
   std::function<void (const std::string&)> timeclockMonitor_;
   std::map<int, std::function<void (int)>> outputMonitor_;
+};
+
+template <>
+struct fmt::formatter<RadioRA2::MonitorType> : fmt::formatter<int> {
+  constexpr auto parse(fmt::format_parse_context& ctx) {
+    return fmt::formatter<int>::parse(ctx);
+  }
+  auto format(const RadioRA2::MonitorType& type, fmt::format_context& ctx) const {
+    return fmt::formatter<int>::format(static_cast<int>(type), ctx);
+  }
+};
+
+template <>
+struct fmt::formatter<RadioRA2::ActionType> : fmt::formatter<int> {
+  constexpr auto parse(fmt::format_parse_context& ctx) {
+    return fmt::formatter<int>::parse(ctx);
+  }
+  auto format(const RadioRA2::ActionType& type, fmt::format_context& ctx) const {
+    return fmt::formatter<int>::format(static_cast<int>(type), ctx);
+  }
 };
