@@ -607,11 +607,24 @@ static void server() {
 }
 
 int main(int argc, char *argv[]) {
-#if defined(NDEBUG)
-  // In production mode, wrap server with a helper process that restarts in
-  // case of unexpected crashes, missed heartbeat signals, or when the
-  // schema changes. In debug mode, disable this feature, as it is much
-  // easier to attach a debugger to a single-process application.
+  // Check command line arguments
+  bool monitor = true;
+  for (int i = 1; i < argc; ++i) {
+    if (!strcmp(argv[i], "--no-monitor") || !strcmp(argv[i], "-d")) {
+      monitor = false;
+    }
+  }
+
+  // If requested, run in standalone mode (no watchdog).
+  // This is useful for debugging with gdb.
+  if (!monitor) {
+    server();
+    return 0;
+  }
+
+  // In production mode (and now by default in debug mode too), wrap server
+  // with a helper process that restarts in case of unexpected crashes,
+  // missed heartbeat signals, or when the schema changes.
   for (;;) {
     // Communication pipe between parent and child process.
     if (childFd[0] >= 0) close(childFd[0]);
@@ -633,29 +646,35 @@ int main(int argc, char *argv[]) {
       sigemptyset(&mask);
       sigaddset(&mask, SIGTERM);
       sigaddset(&mask, SIGINT);
-      if (sigprocmask(SIGBLOCK, &mask, nullptr) < 0) {
+      // Parent also needs to block SIGCHLD so signalfd can catch it
+      sigaddset(&mask, SIGCHLD);
+      if (sigprocmask(SIG_BLOCK, &mask, nullptr) < 0) {
         DBG("Failed to block signals in parent");
       }
       int sfd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
+
+      bool stopping = false; // Flag indicating if we are intentionally stopping
+
       if (sfd >= 0) {
         event.addPollFd(sfd, POLLIN, [&](pollfd *pfd) {
           struct signalfd_siginfo fdsi;
           if (read(sfd, &fdsi, sizeof(fdsi)) == sizeof(fdsi)) {
             if (fdsi.ssi_signo == SIGCHLD) {
-              while (waitpid(-1, nullptr, WNOHANG) > 0) { }
+              // Child state changed. Do not reap it here. We need to exit the
+              // loop so the main waitpid() below can retrieve the exit status
+              event.exitLoop();
             } else {
-              // Forward signal (e.g. SIGTERM) and setup force-kill watchdog
+              // SIGTERM or SIGINT
+              stopping = true;
+              // Forward the signal to the child to ensure it stops
               kill(p, fdsi.ssi_signo);
-
-              // Schedule a forced SIGKILL if the child doesn't die within 5s
+              // Do not exit the loop yet. We must wait for the child to close
+              // the pipe (childFd[0]), which happens when it exits.
+              // Force kill, if it doesn't exit within 5 seconds
               event.addTimeout(5000, [p]() {
                 DBG("Child stuck, forcing SIGKILL");
                 kill(p, SIGKILL);
               });
-              // Do not call event.exitLoop() here. We must keep the loop
-              // running so the timeout above can fire.  When the child
-              // eventually dies (gracefully or forced), the pipe childFd[0]
-              // will close, triggering the loop exit elsewhere.
             }
           }
           return true;
@@ -683,45 +702,52 @@ int main(int argc, char *argv[]) {
           if (i == 1 || (i < 0 && (errno == EAGAIN || errno == EINTR))) {
             if (ch) {
               // Child requested to be restarted. This typically happens because
-              // the Lutron device changed the automation schema, but we
-              // already started setting up our internal data structure with
-              // a schema that is now out of date. A full restart is the
-              // easiest solution to get back into a defined state.
+              // the Lutron device changed the automation schema.
               kill(p, SIGTERM);
               event.addTimeout(5000, [p]() { kill(p, SIGKILL); });
               restart = true;
             } else {
-              // We received a heartbeat signal. Tell the watchdog timer that
-              // everything is still OK.
+              // We received a heartbeat signal.
               resetTmo();
               return true;
             }
           }
-          // If the child exited, leave the event loop and use waitpid() to
-          // check what needs to be done.
+          // If the child exited (EOF), leave the event loop.
           event.exitLoop();
           return false;
         });
         event.loop();
+
         int status = 0;
         const auto rc = waitpid(p, &status, 0);
         if (rc < 0) {
           // If waitpid() failed unexpectedly, kill the child process.
-          // Something went wrong, and we should just terminate altogether.
           if (errno == EINTR) { continue; }
           if (errno != ECHILD) { kill(p, SIGKILL); }
           return 1;
         }
+
+        if (stopping) {
+            // We were asked to stop (SIGTERM/SIGINT), so we do not restart.
+            return 0;
+        }
+
         if (WIFEXITED(status) && !WEXITSTATUS(status)) {
-          // If the child terminated normally, then so should we.
+          // If the child terminated normally (exit code 0), then so should we.
           return 0;
         } else if (restart || !WIFSIGNALED(status) || WCOREDUMP(status)) {
           // If the child requested to be restarted, or if it crashed
-          // unexpectedly, start a new instance.
+          // unexpectedly (non-zero exit or core dump), start a new instance.
+          // Note that straightforward SIGTERM/SIGKILL without core dump will
+          // not cause a restart unless "restart" flag was set, or we implement
+          // specific logic for that. Currently, if killed by external signal
+          // that is not core dump, we exit. This is reasonable behavior.
           break;
         } else {
           // Any other signal suggests that the child was told to quit
-          // (e.g. the user pressed CTRL-C). Exit now.
+          // (e.g. the user pressed ctrl-c or systemctl sent SIGTERM directly
+          // to child).
+          // Exit now.
           return 1;
         }
       }
@@ -731,8 +757,5 @@ int main(int argc, char *argv[]) {
       return 1;
     }
   }
-#else
-  server();
-#endif
   return 0;
 }
