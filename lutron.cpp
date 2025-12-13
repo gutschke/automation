@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <iostream>
+#include <memory>
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -565,8 +566,8 @@ void Lutron::login(std::function<void (void)> cb,
           // Convert to numeric string (fast, no DNS)
           if (getnameinfo(p->ai_addr, p->ai_addrlen, host, sizeof(host),
                           nullptr, 0, NI_NUMERICHOST) == 0) {
-            write(pipefd[1], host, strlen(host));
-            write(pipefd[1], "\n", 1);
+            if (write(pipefd[1], host, strlen(host))) { }
+            if (write(pipefd[1], "\n", 1)) { }
           }
         }
         freeaddrinfo(res);
