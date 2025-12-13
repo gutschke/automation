@@ -22,6 +22,8 @@ class DMX {
   const std::string dev_;
   int fd_;
   std::vector<unsigned char> values_, phys_, updates_, fadeFrom_;
-  int adj_, fadeTime_;
+
+  std::vector<unsigned> adj_;
+  std::vector<int> fadeTime_;
   void *refreshTmo_;
 };

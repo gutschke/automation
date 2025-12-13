@@ -51,11 +51,8 @@ void Event::loop() {
     if (tmo) {
       if (tmo <= now || !later_.empty()) {
         handleTimeouts(now);
-        // Skip poll if we have immediate work, but we must respect "later_"
-        if (!later_.empty()) {
-             compact();
-             continue;
-        }
+        compact();
+        continue;
       } else {
         tmo -= now;
       }
