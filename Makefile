@@ -3,8 +3,8 @@ CXX      := g++
 CFLAGS   := --std=gnu++2a -g -Wall -D_DEFAULT_SOURCE -fno-rtti -fno-exceptions \
             -fno-strict-aliasing -Wno-psabi
 LFLAGS   := -Wall
-LIBS     := -lpugixml
-ALIBS    := -lfmt -lwebsockets -lcap -li2c
+LIBS     := -lfmt -li2c
+ALIBS    := -lwebsockets -lcap -lpugixml
 
 all: automation lutron relay
 SRCS     := $(shell echo *.cpp)
@@ -40,10 +40,10 @@ automation: $(patsubst %.cpp,.build/%.o,$(AUTOMAT)) .build/debug
 	$(CXX) $(DFLAGS) $(LFLAGS) -o $@ $(patsubst %.cpp,.build/%.o,$(AUTOMAT)) $(LIBS) $(ALIBS)
 
 lutron: $(patsubst %.cpp,.build/%.o,$(LUTRON)) .build/debug
-	$(CXX) $(DFLAGS) $(LFLAGS) -o $@ $(patsubst %.cpp,.build/%.o,$(LUTRON)) $(LIBS)
+	$(CXX) $(DFLAGS) $(LFLAGS) -o $@ $(patsubst %.cpp,.build/%.o,$(LUTRON)) $(LIBS) $(ALIBS)
 
 relay: $(patsubst %.cpp,.build/%.o,$(RELAY)) .build/debug
-	$(CXX) $(DFLAGS) $(LFLAGS) -o $@ $(patsubst %.cpp,.build/%.o,$(RELAY)) $(ALIBS)
+	$(CXX) $(DFLAGS) $(LFLAGS) -o $@ $(patsubst %.cpp,.build/%.o,$(RELAY)) $(LIBS)
 
 .build/%.o: %.cpp | .build/debug
 	@mkdir -p .build
