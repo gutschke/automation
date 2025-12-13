@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #endif
 
+#include <algorithm>
 #include <signal.h>
 
 #include "event.h"
@@ -12,85 +13,109 @@ Event::Event() {
 }
 
 Event::~Event() {
-  recomputeTimeoutsAndFds();
+  compact();
 
-  // Do not execute pending "later_" callbacks. The objects that these callbacks
-  // reference have likely already been destroyed. Executing them now leads to
-  // use-after-free crashes.
-  later_.clear();
+  // Clean up remaining active objects
+  for (auto p : pollFds_) delete p;
+  for (auto p : addedFds_) delete p;
+  for (auto t : timeouts_) delete t;
+  for (auto t : addedTimeouts_) delete t;
 
-  // Ideally, the caller should ensure that there are no unresolved
-  // pending tasks. But if there are, we'll abandon them. Hopefully, that's
-  // OK and they didn't involve any dangling objects.
-  for (const auto& timeout : timeouts_) {
-    delete timeout;
-  }
-  for (const auto& pollFd : pollFds_) {
-    delete pollFd;
-  }
   delete[] fds_;
-  for (auto l : loop_) {
-    delete l;
-  }
+  for (auto l : loop_) delete l;
 }
 
 void Event::loop() {
-  recomputeTimeoutsAndFds();
+  compact();
+
   while (!done_ && (!pollFds_.empty() || !timeouts_.empty() ||
-                    !later_.empty())) {
-    // Find timeout that will fire next, if any
+                    !later_.empty() || !addedFds_.empty() ||
+                    !addedTimeouts_.empty())) {
+
+    // Calculate timeout
     unsigned now = Util::millis();
     unsigned tmo = later_.empty() ? 0 : now + 1;
+
     for (const auto& timeout : timeouts_) {
-      if (timeout && (!tmo || tmo > timeout->tmo)) {
+      if (!timeout->deleted && (!tmo || tmo > timeout->tmo)) {
         tmo = timeout->tmo;
       }
     }
+    // Also check added timeouts (though they don't usually expire immediately)
+    for (const auto& timeout : addedTimeouts_) {
+      if (!tmo || tmo > timeout->tmo) {
+        tmo = timeout->tmo;
+      }
+    }
+
     if (tmo) {
-      // If the timeout has already expired, handle it now
       if (tmo <= now || !later_.empty()) {
         handleTimeouts(now);
-        continue;
+        // Skip poll if we have immediate work, but we must respect "later_"
+        if (!later_.empty()) {
+             compact();
+             continue;
+        }
       } else {
         tmo -= now;
       }
     }
 
-    // Some users want to be invoked each time the loop iterates. This
-    // would give them the opportunity to adjust the next timeout value
-    // right before it normally fires.
+    // Loop callbacks
     if (loop_.size()) {
       for (auto l : loop_) {
         (*l)(tmo);
       }
-      if (newTimeouts_) {
-        recomputeTimeoutsAndFds();
-        continue;
+      // If loop callbacks modified state, compact before polling
+      if (!addedFds_.empty() || !addedTimeouts_.empty()) {
+        compact();
       }
     }
 
-    // Wait for next event
-    timespec ts = { (long)tmo / 1000L, ((long)(tmo % 1000))*1000000L };
-    int nFds = pollFds_.size();
-    int rc = ppoll(fds_, nFds, tmo ? &ts : nullptr, nullptr);
-    if (!rc) {
-      handleTimeouts(Util::millis());
-    } else if (rc > 0) {
-      int i = 0;
-      for (auto it = pollFds_.begin();
-           rc > 0 && it != pollFds_.end(); it++, i++) {
-        if (fds_[i].revents) {
-          if (*it) {
-            if ((*it)->cb && !(*it)->cb(&fds_[i])) {
-              removePollFd(*it);
-            }
-          }
-          fds_[i].revents = 0;
-          rc--;
-        }
-      }
+    // Prepare pollfd array. Reallocate if capacity is insufficient
+    if (pollFds_.size() > fds_capacity_) {
+        delete[] fds_;
+        fds_capacity_ = pollFds_.size() + 16; // Small padding
+        fds_ = new pollfd[fds_capacity_];
     }
-    recomputeTimeoutsAndFds();
+
+    int nFds = 0;
+    for (auto p : pollFds_) {
+        if (!p->deleted) {
+            fds_[nFds].fd = p->fd;
+            fds_[nFds].events = p->events;
+            fds_[nFds].revents = 0;
+            nFds++;
+        }
+    }
+
+    // Poll
+    timespec ts = { (long)tmo / 1000L, ((long)(tmo % 1000))*1000000L };
+    int rc = ppoll(fds_, nFds, tmo ? &ts : nullptr, nullptr);
+
+    // Dispatch
+    if (rc == 0) {
+        handleTimeouts(Util::millis());
+    } else if (rc > 0) {
+        processing_ = true;
+        int k = 0;
+        for (auto p : pollFds_) {
+            if (p->deleted) continue;
+
+            if (fds_[k].revents) {
+                if (p->cb && !p->cb(&fds_[k])) {
+                    p->deleted = true;
+                }
+                rc--;
+            }
+            k++;
+            // Optimization: stop if we processed all reported events
+            if (rc == 0) break;
+        }
+        processing_ = false;
+    }
+
+    compact();
   }
 }
 
@@ -99,147 +124,90 @@ void Event::exitLoop() {
 }
 
 void *Event::addPollFd(int fd, short events, std::function<bool (pollfd*)> cb) {
-  if (!newFds_) {
-    newFds_ = new std::vector<PollFd *>(pollFds_);
-  }
-  for (const auto& newFd : *newFds_) {
-    if (newFd->fd == fd && !!(newFd->events & events)) {
-      DBG("Internal error; adding duplicate event");
-      abort();
-    }
-  }
   PollFd *pfd = new PollFd(fd, events, cb);
-  newFds_->push_back(pfd);
+  if (processing_) {
+      addedFds_.push_back(pfd);
+  } else {
+      pollFds_.push_back(pfd);
+  }
   return pfd;
 }
 
 bool Event::removePollFd(int fd, short events) {
   bool removed = false;
+  auto remove = [&](std::vector<PollFd*>& vec) {
+      for (auto p : vec) {
+          if (!p->deleted && p->fd == fd && (!events || events == p->events)) {
+              p->deleted = true;
+              removed = true;
+          }
+      }
+  };
 
-  // Create vector with future poll information
-  if (!newFds_) {
-    newFds_ = new std::vector<PollFd *>(pollFds_);
-  }
-  // Zero out existing record. This avoids the potential for races
-  for (auto& pollFd : pollFds_) {
-    if (pollFd && fd == pollFd->fd && (!events || events == pollFd->events)) {
-      pollFd = nullptr;
-      removed = true;
-    }
-  }
-  // Remove fd from future list
-  newFds_->erase(std::remove_if(newFds_->begin(), newFds_->end(),
-                                [&](auto e) {
-    if (fd == e->fd && (!events || events == e->events)) {
-      removed = true;
-      // It is common for removePollFd() to be called by the callback.
-      // But that lambda object includes a lot of state that cannot safely
-      // be destroyed while the callback is running. Push the actual
-      // destruction onto the "freePollFds_" callback.
-      freePollFds_.push_back(e);
-      return true;
-    }
-    return false;
-  }), newFds_->end());
+  remove(pollFds_);
+  if (processing_) remove(addedFds_);
+
   return removed;
 }
 
 bool Event::removePollFd(void *handle) {
-  if (!handle) {
-    return false;
-  }
+  if (!handle) return false;
 
   bool removed = false;
+  auto p = static_cast<PollFd*>(handle);
 
-  // Create vector with future poll information
-  if (!newFds_) {
-    newFds_ = new std::vector<PollFd *>(pollFds_);
-  }
-  // Zero out existing record. This avoids the potential for races
-  for (auto& pollFd : pollFds_) {
-    if (pollFd && pollFd == handle) {
-      pollFd = nullptr;
+  if (!p->deleted) {
+      p->deleted = true;
       removed = true;
-    }
   }
-  // Remove fd from future list
-  newFds_->erase(std::remove_if(newFds_->begin(), newFds_->end(),
-                                [&](auto e) {
-    if (e == handle) {
-      removed = true;
-      // It is common for removePollFd() to be called by the callback.
-      // But that lambda object includes a lot of state that cannot safely
-      // be destroyed while the callback is running. Push the actual
-      // destruction onto the "freePollFds_" callback.
-      freePollFds_.push_back(e);
-      return true;
-    }
-    return false;
-  }), newFds_->end());
   return removed;
 }
 
 void *Event::addTimeout(unsigned tmo, std::function<void (void)> cb) {
-  if (!newTimeouts_) {
-    newTimeouts_ = new std::vector<Timeout *>(timeouts_);
+  Timeout *t = new Timeout(tmo + Util::millis(), cb);
+  if (processing_) {
+      addedTimeouts_.push_back(t);
+  } else {
+      timeouts_.push_back(t);
   }
-  newTimeouts_->push_back(new Timeout(tmo + Util::millis(), cb));
-  return newTimeouts_->back();
+  return t;
 }
 
 bool Event::removeTimeout(void *handle) {
-  if (!handle) {
-    return false;
-  }
+  if (!handle) return false;
+  auto t = static_cast<Timeout*>(handle);
 
-  bool removed = false;
-
-  // Create vector with future timeouts
-  if (!newTimeouts_) {
-    newTimeouts_ = new std::vector<Timeout *>(timeouts_);
-  }
-  // Zero out existing record. This avoids the potential for races
-  for (auto& timeout : timeouts_) {
-    if (timeout == handle) {
-      timeout = nullptr;
-      removed = true;
-    }
-  }
-  // Remove timeout from future list
-  newTimeouts_->erase(std::remove_if(newTimeouts_->begin(),
-                                     newTimeouts_->end(),
-                                     [&](auto e) {
-    if (e == handle) {
-      removed = true;
-      freeTimeouts_.push_back(e);
+  if (!t->deleted) {
+      t->deleted = true;
       return true;
-    }
-    return false;
-  }), newTimeouts_->end());
-  return removed;
+  }
+  return false;
 }
 
 void Event::handleTimeouts(unsigned now) {
-  do {
-    while (!later_.empty()) {
+  processing_ = true;
+
+  // Process existing timeouts
+  for (const auto& timeout : timeouts_) {
+    if (!timeout->deleted && now >= timeout->tmo) {
+      const auto cb = std::move(timeout->cb);
+      timeout->deleted = true;
+      if (cb) {
+        cb();
+      }
+    }
+  }
+
+  // Process "later_" callbacks
+  while (!later_.empty()) {
       const auto later = std::move(later_);
+      // "later_" is now empty, ready for new insertions
       for (const auto& cb : later) {
-        if (cb) {
-          cb();
-        }
+          if (cb) cb();
       }
-    }
-    for (const auto& timeout : timeouts_) {
-      if (timeout && now >= timeout->tmo) {
-        const auto cb = std::move(timeout->cb);
-        removeTimeout(timeout);
-        if (cb) {
-          cb();
-        }
-      }
-    }
-  } while (!later_.empty());
-  recomputeTimeoutsAndFds();
+  }
+
+  processing_ = false;
 }
 
 void Event::runLater(std::function<void(void)> cb) {
@@ -257,29 +225,39 @@ void Event::removeLoop(void *handle) {
   delete cb;
 }
 
-void Event::recomputeTimeoutsAndFds() {
-  if (newFds_) {
-    delete[] fds_;
-    fds_ = new pollfd[newFds_->size()];
-    int i = 0;
-    for (auto it = newFds_->begin(); it != newFds_->end(); it++, i++) {
-      fds_[i].fd = (*it)->fd;
-      fds_[i].events = (*it)->events;
-      fds_[i].revents = 0;
-    }
-    pollFds_.clear();
-    pollFds_.swap(*newFds_);
-    delete newFds_;
-    newFds_ = nullptr;
+void Event::compact() {
+  // Compact PollFds
+  if (!pollFds_.empty()) {
+      pollFds_.erase(std::remove_if(pollFds_.begin(), pollFds_.end(),
+        [](PollFd* p) {
+          if (p->deleted) {
+              delete p;
+              return true;
+          }
+          return false;
+      }), pollFds_.end());
   }
-  if (newTimeouts_) {
-    timeouts_.clear();
-    timeouts_.swap(*newTimeouts_);
-    delete newTimeouts_;
-    newTimeouts_ = nullptr;
+
+  if (!addedFds_.empty()) {
+      pollFds_.insert(pollFds_.end(), addedFds_.begin(), addedFds_.end());
+      addedFds_.clear();
   }
-  for (auto p : freePollFds_) delete p;
-  freePollFds_.clear();
-  for (auto p : freeTimeouts_) delete p;
-  freeTimeouts_.clear();
+
+  // Compact Timeouts
+  if (!timeouts_.empty()) {
+      timeouts_.erase(std::remove_if(timeouts_.begin(), timeouts_.end(),
+        [](Timeout* t) {
+          if (t->deleted) {
+              delete t;
+              return true;
+          }
+          return false;
+      }), timeouts_.end());
+  }
+
+  if (!addedTimeouts_.empty()) {
+      timeouts_.insert(timeouts_.end(), addedTimeouts_.begin(),
+                       addedTimeouts_.end());
+      addedTimeouts_.clear();
+  }
 }
