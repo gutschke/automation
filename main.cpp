@@ -640,13 +640,23 @@ int main(int argc, char *argv[]) {
       if (sfd >= 0) {
         event.addPollFd(sfd, POLLIN, [&](pollfd *pfd) {
           struct signalfd_siginfo fdsi;
-          if (read(sfd, &fdsi, sizeof(fdsi)) == sizeof(fsdi)) {
-            // Forward the signal to the child to ensure it stops
-            kill(p, fdsi.ssi_signo);
-            // Do not exit the loop yet. We muust wait for the child to close
-            // the pipe (childFd[0]), which happens when it exits. This
-            // ensures we don't return to systemd until child releases all
-            // resources.
+          if (read(sfd, &fdsi, sizeof(fdsi)) == sizeof(fdsi)) {
+            if (fdsi.ssi_signo == SIGCHLD) {
+              while (waitpid(-1, nullptr, WNOHANG) > 0) { }
+            } else {
+              // Forward signal (e.g. SIGTERM) and setup force-kill watchdog
+              kill(p, fdsi.ssi_signo);
+
+              // Schedule a forced SIGKILL if the child doesn't die within 5s
+              event.addTimeout(5000, [p]() {
+                DBG("Child stuck, forcing SIGKILL");
+                kill(p, SIGKILL);
+              });
+              // Do not call event.exitLoop() here. We must keep the loop
+              // running so the timeout above can fire.  When the child
+              // eventually dies (gracefully or forced), the pipe childFd[0]
+              // will close, triggering the loop exit elsewhere.
+            }
           }
           return true;
         });

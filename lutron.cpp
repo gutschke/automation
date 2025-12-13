@@ -888,90 +888,101 @@ void Lutron::processLine(const std::string& line) {
 // what the data means, and executes the different types of delayed
 // operations (i.e. later_, pending_, or onPrompt_).
 void Lutron::readLine() {
-  // If we read an entire line earlier, return it now. Trim all newline
-  // characters at front and back of string. As a special case, we also
-  // recognize the command prompt and always return that as if it was
-  // a complete line. For the purposes of this discussion "login: " and
-  // "password: " are also treated as prompts.
-  const std::string user =
-    pending_[inCallback_].size() ?
-    pending_[inCallback_].rbegin()->cmd : "";
-  const std::string SEP("\r\n", 3);
-  const auto skip = std::min(ahead_.size(), ahead_.find_first_not_of(SEP));
-  const auto gnet = ahead_.find(PROMPT, skip);
-  if (gnet < ahead_.find_first_of(SEP, skip)) {
-    if (!inCallback_) {
-      // As long as we regularly see data, we assume that our connection
-      // is still alive.
-      advanceKeepAliveMonitor();
-    }
-  }
-  // In the case of "login: " and "password: ", these special prompts are
-  // stored in "user". If the variable is non-empty, scan the socket for
-  // those strings.
-  auto ws = std::min(gnet == std::string::npos ? gnet : gnet + 6,
-                     ahead_.find_first_of(SEP, skip));
-  if (!user.empty()) {
-    const auto prompt = ahead_.find(user, skip);
-    if (prompt != std::string::npos && prompt+user.size() < ws) {
-      ws = prompt + user.size();
-    }
-  }
-  if (ws != std::string::npos) {
-    // Found a complete line in our buffer. Return it now and keep the
-    // remainder of the buffered data, if any.
-    std::string ret = ahead_.substr(skip, ws - skip);
-    ahead_ = ahead_.substr(std::min(ahead_.size(),
-                                    ahead_.find_first_not_of(SEP, ws)));
-    if (input_) input_(ret != PROMPT ? ret : "");
-    processLine(ret);
-    readLine();
-    return;
-  }
-  if (sock_ < 0) {
-    // If the stream was closed already, return any buffered characters. No
-    // need to scan for newline. But if there is no more unbuffered data,
-    // return an error instead.
-    if (skip >= ahead_.size()) {
-      DBG("Lutron::readLine() -> ERROR");
-      closeSock();
-    } else {
-      std::string ret = ahead_.substr(skip);
-      ahead_.clear();
-      if (input_) input_(ret != PROMPT ? ret : "");
-      processLine(ret);
-      readLine();
-    }
-    return;
-  }
-  // If we don't have enough data for a full line just yet, read more bytes
-  // from the stream and then try again.
-  event_.removePollFd(sock_);
-  event_.addPollFd(sock_, POLLIN, [=, this](auto) {
-    event_.removePollFd(sock_);
-    char buf[64];
-    const auto rc = read(sock_, buf, sizeof(buf));
-    if (rc <= 0) {
-      // Either end of stream or any other error makes us close the socket.
-      // Please note the "isConnected_" does not yet get reset here.
-      close(sock_);
-      sock_ = -1;
-    } else {
-      ahead_ = ahead_ + std::string(buf, rc);
-
-      if (ahead_.size() > 65536) {
-        // We should never receive an indefinite stream of non-newline
-        // characters. If that does happen, something went very wrong and
-        // we better reset the connection.
-        DBG("Buffer overflow, disconnecting");
-        close(sock_);
-        sock_ = -1;
-        ahead_.clear();
+  // Use an infinite loop to process all buffered lines iteratively.
+  // This prevents stack overflow when receiving many commands in a burst.
+  while (true) {
+    // If we read an entire line earlier, return it now. Trim all newline
+    // characters at front and back of string. As a special case, we also
+    // recognize the command prompt and always return that as if it was
+    // a complete line. For the purposes of this discussion "login: " and
+    // "password: " are also treated as prompts.
+    const std::string user =
+      pending_[inCallback_].size() ?
+      pending_[inCallback_].rbegin()->cmd : "";
+    const std::string SEP("\r\n", 3);
+    const auto skip = std::min(ahead_.size(), ahead_.find_first_not_of(SEP));
+    const auto gnet = ahead_.find(PROMPT, skip);
+    if (gnet < ahead_.find_first_of(SEP, skip)) {
+      if (!inCallback_) {
+        // As long as we regularly see data, we assume that our connection
+        // is still alive.
+        advanceKeepAliveMonitor();
       }
     }
-    readLine();
-    return true;
-  });
+    // In the case of "login: " and "password: ", these special prompts are
+    // stored in "user". If the variable is non-empty, scan the socket for
+    // those strings.
+    auto ws = std::min(gnet == std::string::npos ? gnet : gnet + 6,
+                       ahead_.find_first_of(SEP, skip));
+    if (!user.empty()) {
+      const auto prompt = ahead_.find(user, skip);
+      if (prompt != std::string::npos && prompt+user.size() < ws) {
+        ws = prompt + user.size();
+      }
+    }
+    if (ws != std::string::npos) {
+      // Found a complete line in our buffer. Return it now and keep the
+      // remainder of the buffered data, if any.
+      std::string ret = ahead_.substr(skip, ws - skip);
+      ahead_ = ahead_.substr(std::min(ahead_.size(),
+                                      ahead_.find_first_not_of(SEP, ws)));
+      if (input_) input_(ret != PROMPT ? ret : "");
+      processLine(ret);
+
+      // FIX: Instead of recursing here (readLine()), we 'continue'
+      // to process the next line immediately in the same stack frame.
+      continue;
+    }
+    if (sock_ < 0) {
+      // If the stream was closed already, return any buffered characters. No
+      // need to scan for newline. But if there is no more unbuffered data,
+      // return an error instead.
+      if (skip >= ahead_.size()) {
+        DBG("Lutron::readLine() -> ERROR");
+        closeSock();
+      } else {
+        std::string ret = ahead_.substr(skip);
+        ahead_.clear();
+        if (input_) input_(ret != PROMPT ? ret : "");
+        processLine(ret);
+
+        // Continue to process the closure (will hit the ERROR block next loop).
+        continue;
+      }
+      return;
+    }
+    // If we don't have enough data for a full line just yet, read more bytes
+    // from the stream and then try again.
+    event_.removePollFd(sock_);
+    event_.addPollFd(sock_, POLLIN, [=, this](auto) {
+      event_.removePollFd(sock_);
+      char buf[64];
+      const auto rc = read(sock_, buf, sizeof(buf));
+      if (rc <= 0) {
+        // Either end of stream or any other error makes us close the socket.
+        // Please note the "isConnected_" does not yet get reset here.
+        close(sock_);
+        sock_ = -1;
+      } else {
+        ahead_ = ahead_ + std::string(buf, rc);
+
+        if (ahead_.size() > 65536) {
+          // We should never receive an indefinite stream of non-newline
+          // characters. If that does happen, something went very wrong and
+          // we better reset the connection.
+          DBG("Buffer overflow, disconnecting");
+          close(sock_);
+          sock_ = -1;
+          ahead_.clear();
+        }
+      }
+      readLine();
+      return true;
+    });
+
+    // Explicit return to break the loop and wait for the poll event.
+    return;
+  }
 }
 
 void Lutron::pollIn(std::function<bool (pollfd *)> cb) {
