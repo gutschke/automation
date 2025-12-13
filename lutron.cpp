@@ -3,10 +3,13 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netdb.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "lutron.h"
@@ -405,145 +408,220 @@ void Lutron::login(std::function<void (void)> cb,
     return;
   }
   initStillWorking();
-  const auto lookupAddress = [=, this](const std::string& gateway) {
-    // Look up network address (i.e. resolve DNS names, convert numeric
-    // IP addresses to binary representation).
-    struct addrinfo hints = { .ai_family = AF_UNSPEC,
-                              .ai_socktype = SOCK_STREAM };
-    struct addrinfo *result = 0;
-    if (getaddrinfo(gateway.c_str(), "23", &hints, &result) || !result) {
-      DBG("getaddrinfo() failed (\"" << gateway << "\")");
-      closeSock();
-      if (err) {
-        event_.runLater(err);
-      }
+
+  // This lambda iterates over a list of IP addresses (as strings) and tries
+  // to connect to them one by one.
+  const auto tryNextAddress = Util::rec([=, this](auto&& tryNextAddress,
+      std::shared_ptr<std::vector<std::string>> ips, size_t idx) -> void {
+    if (idx >= ips->size()) {
+      DBG("No more addresses to try");
+      if (err) err();
       return;
     }
+
+    initStillWorking();
+
+    // Resolve the numeric IP string to a sockaddr. This is fast and non-
+    // blocking because "ips->at(idx)" is already a numeric string
+    // (e.g. "192.168.1.5").
+    struct addrinfo hints = { .ai_flags = AI_NUMERICHOST,
+                              .ai_family = AF_UNSPEC,
+                              .ai_socktype = SOCK_STREAM };
+    struct addrinfo *result = nullptr;
+    if (getaddrinfo(ips->at(idx).c_str(), "23", &hints, &result) || !result) {
+      DBG("Invalid IP address: " << ips->at(idx));
+      // Try the next one
+      tryNextAddress(ips, idx + 1);
+      return;
+    }
+
+    // We need to manage the lifetime of "result".
     dontfinalize_ = true;
     const auto freeaddrHandler = timeout_.push([this, result]() {
       freeaddrinfo(result);
       dontfinalize_ = false;
     });
 
-    // Iterate over all addresses returned by the resolver and try to connect
-    // to the server. This can take a while, so do it asynchronously on the
-    // event loop.
-    const auto openSocket = Util::rec([=, this](auto&& openSocket,
-                                                struct addrinfo *rp) -> void {
-      initStillWorking();
-      const auto doLogin = [=, this]() {
-        inCallback_ = true;
-        enterPassword([=, this]() {
-          // Pop both tmoHandler and freeaddrHandler.
-          addrLen_ = rp->ai_addrlen;
-          memcpy(&addr_, rp->ai_addr,
-                 std::min((socklen_t)sizeof(addr_), addrLen_));
-          timeout_.pop(freeaddrHandler);
-          bool oldCommand = inCommand_;
-          inCommand_ = false;
-          const auto doneInitializing = [=, this]() {
-            checkDelayed([=, this]() {
-              DBG("Finished initializing");
-              inCallback_ = false;
-              inCommand_ = oldCommand && isConnected_;
-              if (cb) { cb(); } });};
-          if (init_) {
-            init_(doneInitializing);
-          } else {
-            doneInitializing();
-          } },
-        [=, this]() {
-          // Pop only tmoHandler (already done), then try next address.
-          DBG("Failed to enter password");
-          closeSock();
-          openSocket(rp->ai_next); });
-      };
+    // Attempt to connect.
+    ahead_.clear();
+    sock_ = socket(result->ai_family,
+                   result->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC,
+                   result->ai_protocol);
+    isConnected_ = sock_ >= 0;
 
-      // Iterate over all addresses until either we are blocked on I/O or
-      // we have reached the end of the list.
-      for (;;) {
-        // End of list was reached and none of the servers responded. Return
-        // error.
-        if (!rp) {
-          DBG("No addresses found");
-          timeout_.pop(freeaddrHandler);
-          if (err) {
-            err();
-          }
-          return;
-        }
-        // Create a non-blocking networking socket.
-        ahead_.clear();
-        sock_ = socket(rp->ai_family,
-                       rp->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC,
-                       rp->ai_protocol);
-        isConnected_ = sock_ >= 0;
-        if (isConnected_) {
-          // If things take too long, abort the operation.
-          const auto tmo = event_.addTimeout(TMO/3,
-            [=, this, tmoHandler = timeout_.next()]() {
-            DBG("Timeout trying to connect");
-            timeout_.pop(tmoHandler);
-            closeSock();
-            openSocket(rp->ai_next);
-          });
-          const auto tmoHandler = timeout_.push([event = &event_, tmo]() {
-            event->removeTimeout(tmo);
-          });
-          // Try to open connection to server.
-          if (connect(sock_, rp->ai_addr, rp->ai_addrlen) >= 0) {
-            // That worked on the first try. Try to log in.
-            DBG("Synchronous success");
-            timeout_.pop(tmoHandler);
-            doLogin();
-            return;
-          }
-          // The connection wasn't immediately available. Wait until the
-          // socket becomes writable then check whether the connection has
-          // been established asynchronously.
-          if (errno == EINPROGRESS || errno == EWOULDBLOCK) {
-            event_.addPollFd(sock_, POLLOUT, [=, this](auto) {
-              event_.removePollFd(sock_);
-              socklen_t addrlen = 0;
-              if (getpeername(sock_, (struct sockaddr *)"", &addrlen) < 0) {
-                // Unable to open connection to this address. Keep trying with
-                // the next address.
-                DBG("Asynchronous failure");
-                timeout_.pop(tmoHandler);
-                closeSock();
-                openSocket(rp->ai_next);
-              } else {
-                // Try to log in. That could take a while. So, again, let's
-                // run this operation asynchronously. If everything worked, we
-                // are done. But if we fail to log in then try the next address.
-                timeout_.pop(tmoHandler);
-                doLogin();
-              }
-              return true;
-            });
-            return;
-          } else {
-            DBG("Unexpected I/O error: " << errno);
-            timeout_.pop(tmoHandler);
-            closeSock();
-          }
-        }
-        // Synchronously iterate to the next address. This is an unlikely
-        // code path, as we won't get here if any of the I/O operations
-        // blocked.
-        rp = rp->ai_next;
-      }
+    if (!isConnected_) {
+        timeout_.pop(freeaddrHandler);
+        tryNextAddress(ips, idx + 1);
+        return;
+    }
+
+    // Set a connection timeout
+    const auto tmo = event_.addTimeout(TMO/3,
+      [=, this, tmoHandler = timeout_.next()]() {
+      DBG("Timeout trying to connect to " << ips->at(idx));
+      timeout_.pop(tmoHandler);
+      closeSock();
+      tryNextAddress(ips, idx + 1);
     });
-    openSocket(result);
+
+    const auto tmoHandler = timeout_.push([event = &event_, tmo]() {
+      event->removeTimeout(tmo);
+    });
+
+    // Helper to proceed with login sequence after successful connection
+    const auto doLogin = [=, this]() {
+      inCallback_ = true;
+      enterPassword([=, this]() {
+        // Success!
+        addrLen_ = result->ai_addrlen;
+        memcpy(&addr_, result->ai_addr,
+               std::min((socklen_t)sizeof(addr_), addrLen_));
+        timeout_.pop(freeaddrHandler); // Frees 'result' and pops tmoHandler
+
+        bool oldCommand = inCommand_;
+        inCommand_ = false;
+        const auto doneInitializing = [=, this]() {
+          checkDelayed([=, this]() {
+            DBG("Finished initializing");
+            inCallback_ = false;
+            inCommand_ = oldCommand && isConnected_;
+            if (cb) { cb(); }
+          });
+        };
+        if (init_) {
+          init_(doneInitializing);
+        } else {
+          doneInitializing();
+        }
+      },
+      [=, this]() {
+        // Password failed (or other login error).
+        DBG("Failed to log in to " << ips->at(idx));
+        closeSock(); // This pops handlers
+        tryNextAddress(ips, idx + 1);
+      });
+    };
+
+    // Perform the connection
+    if (connect(sock_, result->ai_addr, result->ai_addrlen) >= 0) {
+      DBG("Synchronous success connecting to " << ips->at(idx));
+      timeout_.pop(tmoHandler); // Remove connection timeout
+      doLogin();
+    } else if (errno == EINPROGRESS || errno == EWOULDBLOCK) {
+      event_.addPollFd(sock_, POLLOUT, [=, this](auto) {
+        event_.removePollFd(sock_);
+        socklen_t len = 0;
+        if (getpeername(sock_, (struct sockaddr *)"", &len) < 0) {
+          DBG("Asynchronous failure connecting to " << ips->at(idx));
+          timeout_.pop(tmoHandler);
+          closeSock();
+          tryNextAddress(ips, idx + 1);
+        } else {
+          timeout_.pop(tmoHandler);
+          doLogin();
+        }
+        return true;
+      });
+    } else {
+      DBG("Connect error: " << errno);
+      timeout_.pop(tmoHandler);
+      closeSock();
+      tryNextAddress(ips, idx + 1);
+    }
+  });
+
+  // This lambda performs the asynchronous name resolution
+  const auto lookupAddress = [=, this](const std::string& gateway) {
+    if (gateway.empty()) {
+        if (err) err();
+        return;
+    }
+
+    int pipefd[2];
+    if (pipe2(pipefd, O_CLOEXEC | O_NONBLOCK)) {
+      DBG("Failed to create pipe for DNS lookup");
+      if (err) err();
+      return;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+      // Child process
+      close(pipefd[0]);
+
+      // Unblock signals so the child behaves normally
+      sigset_t mask;
+      sigemptyset(&mask);
+      sigprocmask(SIG_SETMASK, &mask, nullptr);
+
+      // Perform blocking DNS lookup
+      struct addrinfo hints = {}, *res;
+      hints.ai_family = AF_UNSPEC;
+      hints.ai_socktype = SOCK_STREAM;
+
+      if (getaddrinfo(gateway.c_str(), nullptr, &hints, &res) == 0) {
+        for (struct addrinfo *p = res; p; p = p->ai_next) {
+          char host[NI_MAXHOST];
+          // Convert to numeric string (fast, no DNS)
+          if (getnameinfo(p->ai_addr, p->ai_addrlen, host, sizeof(host),
+                          nullptr, 0, NI_NUMERICHOST) == 0) {
+            write(pipefd[1], host, strlen(host));
+            write(pipefd[1], "\n", 1);
+          }
+        }
+        freeaddrinfo(res);
+      }
+      _exit(0); // Exit immediately. Parent handles zombie cleanup.
+    } else if (pid > 0) {
+      // Parent process
+      close(pipefd[1]);
+
+      // Read IPs asynchronously
+      auto ips = std::make_shared<std::vector<std::string>>();
+
+      event_.addPollFd(pipefd[0], POLLIN,
+        [=, this, fd = pipefd[0], buf = std::string()](pollfd *pfd) mutable {
+        char buffer[256];
+        ssize_t rc = read(fd, buffer, sizeof(buffer));
+
+        if (rc > 0) {
+          buf.append(buffer, rc);
+          size_t pos;
+          while ((pos = buf.find('\n')) != std::string::npos) {
+            std::string line = Util::trim(buf.substr(0, pos));
+            if (!line.empty()) {
+              ips->push_back(line);
+            }
+            buf.erase(0, pos + 1);
+          }
+          return true;
+        } else if (rc < 0 && (errno == EAGAIN || errno == EINTR)) {
+          return true;
+        } else {
+          // EOF or error. Child is done.
+          close(fd);
+          if (ips->empty()) {
+             DBG("DNS lookup returned no results for " << gateway);
+             if (err) err();
+          } else {
+             // Start trying to connect to the resolved IPs
+             tryNextAddress(ips, 0);
+          }
+          return false;
+        }
+      });
+    } else {
+      DBG("Fork failed");
+      close(pipefd[0]);
+      close(pipefd[1]);
+      if (err) err();
+    }
   };
 
+  // Main login logic
   if (gateway_.empty() || gateway_ == "auto") {
-    // If the user didn't configure a particular IP address for the main
-    // repeater, search for it by sending a request to the multicast address
-    // 224.0.37.42:2647
+    // Discovery logic (UDP multicast)
     if (msock_ >= 0) {
-      // If we already have an open multicast socket, close it now. It might
-      // still hang around briefly after a timeout has expired.
       event_.removePollFd(msock_);
       close(msock_);
     }
@@ -558,10 +636,7 @@ void Lutron::login(std::function<void (void)> cb,
                     sizeof(membr)) &&
         sendto(msock_, req, sizeof(req)-1, 0, (const sockaddr *)&mcast,
                sizeof(mcast)) == sizeof(req)-1) {
-      // We need to parse the reponse from the main repeater (or any other
-      // device that is using this multicast address and sent us a reply). The
-      // response looks similar'ish to XML, but isn't well-formed. So, we can't
-      // use a proper XML parser and have to use an ad hoc parser instead.
+
       event_.addPollFd(msock_, POLLIN, [=, this](auto) {
         char buf[1500] = { '>' };
         const auto rc = read(msock_, buf + 1, sizeof(buf) - 2);
@@ -660,39 +735,40 @@ void Lutron::login(std::function<void (void)> cb,
         return true;
       });
     } else {
-      DBG("Failed to find Lutron main repeater using multicast discovery");
-      if (msock_ >= 0) {
-        close(msock_);
-        msock_ = -1;
-      }
+      // Multicast failed
+      if (msock_ >= 0) { close(msock_); msock_ = -1; }
     }
   } else if (gateway_ != "find-radiora2") {
-    // If the caller provided the address or name of the server, we can
-    // connect directly.
+    // Direct connection (this is the most common path)
     lookupAddress(gateway_);
   } else {
-    // If the address isn't known, use a helper script to scan the network.
-    // This operation can take a while, so perform it asynchronously.
-    FILE *fp = popen("./find-radiora2", "r");
-    const auto pcloseHandler = timeout_.push([event = &event_, fp]() {
-      event->removePollFd(fileno(fp));
-      pclose(fp);
-    });
-    g_ = "";
-    event_.addPollFd(fileno(fp), POLLIN, [=, this, &gateway = this->g_](auto) {
-      char buf[64];
-      const auto rc = read(fileno(fp), buf, sizeof(buf));
-      // If we reached the end of the file, use this as the server to
-      // connect to.
-      if (rc <= 0) {
-        timeout_.pop(pcloseHandler);
-        lookupAddress(gateway = Util::trim(gateway));
-        return false;
-      } else {
-        gateway = gateway + std::string(buf, rc);
-      }
-      return true;
-    });
+    // "find-radiora2" script execution.
+    int pipefd[2];
+    if (pipe2(pipefd, O_CLOEXEC | O_NONBLOCK) == 0) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            close(pipefd[0]); dup2(pipefd[1], 1); close(pipefd[1]);
+            sigset_t mask;
+            sigemptyset(&mask);
+            sigprocmask(SIG_SETMASK, &mask, nullptr);
+            execl("./find-radiora2", "./find-radiora2", (char*)nullptr);
+            _exit(127);
+        } else if (pid > 0) {
+            close(pipefd[1]);
+            this->g_ = "";
+            event_.addPollFd(pipefd[0], POLLIN, [=, this, fd=pipefd[0]](auto) {
+                char buf[64];
+                const auto rc = read(fd, buf, sizeof(buf));
+                if (rc <= 0) {
+                    close(fd);
+                    lookupAddress(Util::trim(this->g_));
+                    return false;
+                }
+                this->g_ += std::string(buf, rc);
+                return true;
+            });
+        }
+    }
   }
 }
 
