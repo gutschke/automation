@@ -179,14 +179,14 @@ void Relay::toggle(int pin, bool slow) {
   set(pin, true, GPIOHANDLE_REQUEST_BIAS_DISABLE);
 
   // The relay board now reads an "on" condition, but the keyfob is still "off"
-  event_.addTimeout(slow ? 1200 : 300, [this, pin]() {
+  event_.addTimeout(slow ? 1200 : 300, [this, pin, slow]() {
     // Next, we also signal an "on" condition to the keyfob remote. The relay
     // board will treat this as "off".
     set(pin, false, GPIOHANDLE_REQUEST_BIAS_DISABLE);
 
     const auto i2c = this->i2c_.find(pin);
     if (i2c == this->i2c_.end())
-      event_.addTimeout(300, [this, pin]() {
+      event_.addTimeout(slow ? 1200 : 300, [this, pin]() {
         // Return pin to the "off" condition, by relying on the pull-down
         // resistor to do the right thing for both types of devices.
         get(pin, GPIOHANDLE_REQUEST_BIAS_PULL_DOWN);
